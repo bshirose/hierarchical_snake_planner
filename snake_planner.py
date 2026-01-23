@@ -149,8 +149,6 @@ class SnakePlanner:
 
             # Expand Neighbors
             neighbors = self._get_neighbors(current_node)
-            print("new best:", global_best_dist)
-            print(current_node.h)
             a=1
 
             
@@ -186,7 +184,6 @@ class SnakePlanner:
                 _, ee_tm = self._forward_kinematics(neighbor.H)
                 neighbor.data[3:6] = np.round(ee_tm[0:3, 3], 2)
                 neighbor.h = self._calculate_h(neighbor)
-                print("h:", neighbor.h, "ee_pos:", neighbor.data[3:6])
 
             pbar.update(1)
 
