@@ -1,0 +1,18 @@
+<?xml version="1.0"?>
+<robot name="REU_snake">
+  <disable_collisions link1="reu_module_out_1" link2="reu_module_body_2"/>
+  <disable_collisions link1="reu_module_out_2" link2="reu_module_body_3"/>
+  <disable_collisions link1="reu_module_out_3" link2="reu_module_body_4"/>
+  <disable_collisions link1="reu_module_out_4" link2="reu_module_body_5"/>
+  <disable_collisions link1="reu_module_out_5" link2="reu_module_body_6"/>
+  <disable_collisions link1="reu_module_out_6" link2="reu_module_body_7"/>
+  <disable_collisions link1="reu_module_out_7" link2="reu_module_body_8"/>
+  <disable_collisions link1="reu_module_out_8" link2="reu_module_body_9"/>
+  <disable_collisions link1="reu_module_out_9" link2="reu_module_body_10"/>
+  <disable_collisions link1="reu_module_out_10" link2="reu_module_body_11"/>
+  <disable_collisions link1="reu_module_out_11" link2="reu_module_body_12"/>
+  <disable_collisions link1="reu_module_out_12" link2="reu_module_body_13"/>
+  <disable_collisions link1="reu_module_out_13" link2="reu_module_body_14"/>
+  <disable_collisions link1="reu_module_out_14" link2="reu_module_body_15"/>
+  <disable_collisions link1="reu_module_out_15" link2="reu_module_body_16"/>
+</robot>
