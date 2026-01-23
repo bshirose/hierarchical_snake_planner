@@ -9,7 +9,7 @@ This repository contains a hybrid **Python/MATLAB** framework designed for the p
 | File | Description |
 | :--- | :--- |
 | **`snake_planner.py`** | **[CORE]** The main planner. Implements a greedy best-first search in a latent Bezier space, maps to joint space via optimization-based IK, and verifies dynamics using RNEA. |
-| **`snake_visualizer.m`** | **[PROCESSOR]** MATLAB script that ingests the raw planner output, and exports the final trajectory file. |
+| **`snake_visualizer.m`** | **[RENDERER]** MATLAB script that ingests the raw planner output, visualizes the final state of the snake and exports a trajectory file compatible with vid_recorder. |
 | **`vid_recorder.m`** | **[RENDERER]** MATLAB script for high-quality playback and `.avi` video recording of the final result. |
 
 ---
