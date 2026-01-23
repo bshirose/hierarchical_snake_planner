@@ -1,6 +1,3 @@
-% This script loads and visualizes a pre-computed multi-segment trajectory
-% for a 16-LINK snake robot, correctly handling changes in the robot's base
-% of operation ('REACH'/'PULL' modes) between segments.
 
 clear; close all;
 
@@ -10,35 +7,20 @@ clear; close all;
 global save_execl;
 save_execl=false;
 % --- Load Data ---
-data_filename = 'trajectory_data_insat_gym_2.mat'; % Load the v14 data file
+data_filename = 'snake_traj.mat'; % Load the v14 data file
 if ~exist(data_filename, 'file')
     error('Could not find %s. Please run the generation script first.', data_filename);
 end
 fprintf('Loading trajectory data from %s...\n', data_filename);
 load(data_filename);
 
-% --- Check for optional data for backward compatibility ---
-% If the loaded file is missing these *new* v14 parameters,
-% set them to default values to avoid errors.
-% if ~exist('passage_axes', 'var'), passage_axes = repmat({'Y'}, 1, length(locomotion_modes)); end
-% if ~exist('num_fixed_links_from_base', 'var'), num_fixed_links_from_base = repmat({0}, 1, length(locomotion_modes)); end
-
 
 % =========================================================================
 % 2. PLOT STATE AND CONTROL TRAJECTORIES (2D GRAPHS)
 % =========================================================================
-% This 2D plot is crucial for debugging the optimizer's output.
-% It will now plot all 16 joints.
 figure('Name', 'Optimal Trajectories (Full Path)', 'NumberTitle', 'off');
 q_legend = arrayfun(@(d) sprintf('q%d', d), 1:n_links, 'UniformOutput', false);
-% subplot(3,1,1); plot(full_time_vector, full_q_opt, 'LineWidth',1.5); title('Optimal Joint Angles (q)'); xlabel('Time (s)'); ylabel('Angle (rad)'); legend(q_legend,'Location','best'); grid on;
-% subplot(3,1,2); plot(full_time_vector, full_q_dot_opt, 'LineWidth',1.5); title('Optimal Joint Velocities (q\_dot)'); xlabel('Time (s)'); ylabel('Angular Vel (rad/s)'); grid on;
-% subplot(3,1,3); plot(full_time_vector, full_u_opt, 'LineWidth',1.5); title('Optimal Joint Accelerations (u)'); xlabel('Time (s)'); ylabel('Angular Accel (rad/s^2)'); grid on;
 
-% =========================================================================
-% 3. ANIMATE THE ROBOT
-% =========================================================================
-% This call passes all the dynamic trajectory data to the animation function.
 animateRobot(full_q_opt, link_length, full_time_vector, waypoints, record_video, obstacle_cuboid, segment_end_times, full_T_base_trajectory, full_base_end_trajectory,actual_obs);
 
 % =========================================================================
@@ -82,7 +64,7 @@ function animateRobot(q_trajectory, link_length, time_vector, waypoints, record_
     
     disp('Press any key to start animation...'); 
     % pause; 
-    video_has_been_recorded = false;
+    video_has_been_recorded = true;
     
     % --- Animation Loop Callback Function ---
     function run_animation_loop(~, ~)
@@ -92,7 +74,7 @@ function animateRobot(q_trajectory, link_length, time_vector, waypoints, record_
         total_time = time_vector(end);
         
         % --- Main Animation Loop (Updated for Locomotion) ---
-        for t = 0:(1/20):total_time % Play at 60fps
+        for t = 0:(1/60):total_time % Play at 60fps
             % --- Find the current segment ---
             % 'segment_end_times' is [0, T1, T2, T3]
             % 'find' returns the *first* index where t is <= the end time.
@@ -185,34 +167,6 @@ function da = coldata2(q_curr,quat,pos)
     
 end
 
-function da = coldata(q_curr,quat,fix)
-    da.a=q_curr(1);
-    da.b=q_curr(2);
-    da.c=q_curr(3);
-    da.d=q_curr(4);
-    da.e=q_curr(5);
-    da.f=q_curr(6);
-    da.g=q_curr(7);
-    da.h=q_curr(8);
-    da.i=q_curr(9);
-    da.j=q_curr(10);
-    da.k=q_curr(11);
-    da.l=q_curr(12);
-    da.m=q_curr(13);
-    da.n=q_curr(14);
-    da.o=q_curr(15);
-    da.p=q_curr(16);
-
-    da.q=quat(1);
-    da.r=quat(2);
-    da.s=quat(3);
-    da.t=quat(4);
-
-    da.u=fix;
-    
-end
-
-
 % --- Helper: Get All Points (for Bounding Box) ---
 function P_all = getAllPoints(q_traj, link_length, T_base_traj, base_end_traj, seg_times)
     P_all = []; t_vec = linspace(0, seg_times(end), size(q_traj,2));
@@ -229,7 +183,6 @@ function P_all = getAllPoints(q_traj, link_length, T_base_traj, base_end_traj, s
 end
 
 % --- Helper: Plot Cuboid ---
-function plot_cuboid_faces(ax,c,p,dN),if isempty(c),return;end;x_c=[c(1),c(4)];y_c=[c(2),c(5)];z_c=[c(3),c(6)];v=[x_c(1),y_c(1),z_c(1);x_c(2),y_c(1),z_c(1);x_c(2),y_c(2),z_c(1);x_c(1),y_c(2),z_c(1);x_c(1),y_c(1),z_c(2);x_c(2),y_c(1),z_c(2);x_c(2),y_c(2),z_c(2);x_c(1),y_c(2),z_c(2)];f_Xm=[1 4 8 5];f_XM=[2 3 7 6];f_Ym=[1 2 6 5];f_YM=[3 4 8 7];f_Zm=[1 2 3 4];f_ZM=[5 6 7 8];
 switch upper(p),case 'X',fs=[f_Ym;f_YM;f_Zm;f_ZM];case 'Y',fs=[f_Xm;f_XM;f_Zm;f_ZM];case 'Z',fs=[f_Xm;f_XM;f_Ym;f_YM];otherwise,fs=[f_Ym;f_YM;f_Zm;f_ZM];end;patch(ax,'Vertices',v,'Faces',fs,'FaceColor','b','FaceAlpha',0.1,'EdgeColor','b','LineStyle','--','DisplayName',dN);end
 
 % --- Helper: Generalized Forward Kinematics (v13+) ---
