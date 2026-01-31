@@ -204,7 +204,6 @@ class SerpenoidKinematics3D:
             # Changes shape from Sine Wave <-> Helix
             (4,  0.1), (4, -0.1),
 
-
             # 5. Change omega by a small amount
             (2,  0.02), (2, -0.02)
         ]
@@ -235,17 +234,10 @@ class SnakePlanner:
     and maps to joint angles using Inverse Kinematics, while verifying 
     dynamic feasibility (torque limits) and collisions.
     """
-
- 
-
     def __init__(self, 
                  num_links=15, 
                  link_length=0.05105, 
-                #  link_mass=0.250,
-                #  base_loc=None,
-                #  torque_limit=16,
                  goal_proximity=0.04,
-                #  cost_grid_size=0.03,
                  bounds=0.9,
                  params=[0,0,0,0,0,0,0]):
         
@@ -253,8 +245,6 @@ class SnakePlanner:
         self.num_links = num_links
         self.link_length = link_length
         self.snake_length = num_links * link_length
-        # self.link_mass = link_mass
-        # self.base_loc = base_loc if base_loc is not None else np.array([0, 0, 0])
         self.base_tf = np.eye(4)  # Assuming base rotation is identity for 
 
         self.serp_kin = SerpenoidKinematics3D(num_links=num_links, link_length=link_length, base_tf=self.base_tf)
@@ -264,21 +254,7 @@ class SnakePlanner:
         self.ddp = get_problem()
         self.ddp_ee = get_ee_problem()
 
-        # set up traj opt pinn environemnt
-        
-
-
-
-
-        
-        # Planning Constraints & Thresholds
-        # self.torque_limit = torque_limit
-        # self.jammed_links = 1  # Number of links at base assumed "jammed" or highly constrained
         self.goal_proximity = goal_proximity
-        # self.bounds_limit = bounds
-        # self.length_thresh = 1.05
-        
-
 
     def plan(self, x_init, goal_pose, max_iter=15000):
         """
@@ -295,16 +271,9 @@ class SnakePlanner:
         """
         self.goal_pose =goal_pose
 
-        # set up bounds on the params
-
-
-
-        
         root = Node(self.root_params, get_id())
         root.H = x_init if x_init is not None else self._lift_to_high(root)
-        
-
-        
+         
         root.H_traj = np.array([root.H])
         root.h = self._calculate_h(root)
         root.g = 0
@@ -344,25 +313,15 @@ class SnakePlanner:
                 best_node = current_node
                 pbar.set_postfix({"Best Dist": f"{global_best_dist:.3f}"})
 
-            # Expand Neighbors
-            # neighbors = self._get_neighbors(current_node)
             neighbors = self.serp_kin.get_neighbors(current_node, goal_pose.translation, self.serp_kin)
-            a=1
 
-            
             for neighbor in neighbors:
                 neighbor_sig = tuple(np.round(neighbor.data, 2))
                 if neighbor_sig in closed_set:
                     continue
 
-                # Inverse Kinematics (Latent -> Joint Space)
                 neighbor.H = self._lift_to_high(neighbor)
                 
-                # # Check Static Collision (Pose)
-                # if not self._is_collision_free(neighbor.H):
-                #     continue
-
-                # Check Dynamic Feasibility (Trajectory)
                 ok, traj,us,cost = do_traj_opt(self.ddp,root.H[:self.ddp_ee.nq], neighbor.H[:self.ddp_ee.nq])
                 
                 if ok:
@@ -378,9 +337,6 @@ class SnakePlanner:
                     else:
                         continue
 
-                # Update Heuristic based on actual IK result
-                # _, ee_tm = self._forward_kinematics(neighbor.H)
-                # neighbor.data[3:6] = np.round(ee_tm[0:3, 3], 2)
                 print(self._calculate_ee_diff(neighbor))
                 neighbor.h = self._calculate_h(neighbor)
 
@@ -390,14 +346,6 @@ class SnakePlanner:
         print(f"Max iterations reached. Best distance: {global_best_dist}")
         return best_node.H_traj
 
-    # =========================================================================
-    #    Helper Methods (Dynamics, Kinematics, Collision, Heuristics)
-    # =========================================================================
-
-    # def _get_id(self):
-    #     self._node_counter += 1
-    #     return self._node_counter
-    
     def _lift_to_high(self, node):
         return self.serp_kin.get_joint_angles(node.data)
 

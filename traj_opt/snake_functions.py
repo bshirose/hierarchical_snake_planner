@@ -71,8 +71,6 @@ def do_traj_opt(ddp,q_init,q_f):
     return ok,xs,us,cost
 
 
-
-
 def calculate_h(ddp_ee,q_init,goal):
     q0 = q_init.copy()
     v0 = np.zeros(ddp_ee.model.nv)
@@ -83,29 +81,15 @@ def calculate_h(ddp_ee,q_init,goal):
     nv = ddp_ee.nv
     nu = ddp_ee.nu
 
-
-
     eef = goal.copy()
 
-
-
-
-    # Time horizon and discretization
     T = 8.0
     dt = 0.05
 
-    # Create and solve ddp_ee problem
-    # You just need to call ddp_ee.CreateProblem once.
-    # If x0 or eef is changed, you can pass the new value to ddp_ee.Solve(x0,eef)
-    
     t = time.time()
     ok, xs, us, cost = ddp_ee.Solve(x0, eef, maxiter=10000)
     elapsed = time.time() - t
 
-    # print("Solver converged:", ok)
-    # print("Solver time:", elapsed, "s")
-
-    # Extract joint trajectories
     ts = np.linspace(0.0, T, xs.shape[0])
     qs = xs[:, :nq]
 
@@ -117,20 +101,9 @@ def calculate_h(ddp_ee,q_init,goal):
     if np.linalg.norm(pin.SE3ToXYZQUAT(eef) - pin.SE3ToXYZQUAT(eef_a)) > 1e-2:
         ok = False
     return ok,qs, cost
-        # print("Final state error too high:", np.linalg.norm(pin.SE3ToXYZQUAT(eef) - pin.SE3ToXYZQUAT(eef_a)))
 
 def get_ee_pose(ddp_ee,q):
     pin.forwardKinematics(ddp_ee.model, ddp_ee.data, q)
     pin.updateFramePlacements(ddp_ee.model, ddp_ee.data)
     eef_a = ddp_ee.robot.data.oMf[ddp_ee.ee_frame_id]
     return eef_a
-    # # Interpolate trajectory for smooth playback
-    # t_interp = np.linspace(0.0, T, int(T * 60))
-    # cs = CubicSpline(ts, qs, axis=0)
-    # q_interp = cs(t_interp)
-
-    # # Animated trajectory in Meshcat
-    # ddp_ee.robot.setVisualizer(MeshcatVisualizer())
-    # ddp_ee.robot.initViewer(open=True)
-    # ddp_ee.robot.loadViewerModel()
-    # ddp_ee.robot.play(q_interp, 1/60)
