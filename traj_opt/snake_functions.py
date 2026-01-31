@@ -68,6 +68,7 @@ def do_traj_opt(ddp,q_init,q_f):
     xf = np.concatenate([q_f, vf])
 
     ok, xs, us, cost = ddp.Solve(x0, xf, maxiter=10000)
+    
     return ok,xs,us,cost
 
 
@@ -107,3 +108,78 @@ def get_ee_pose(ddp_ee,q):
     pin.updateFramePlacements(ddp_ee.model, ddp_ee.data)
     eef_a = ddp_ee.robot.data.oMf[ddp_ee.ee_frame_id]
     return eef_a
+
+
+
+
+def add_square_tunnel(problem, center_pos, orientation_axis, width, height, length, wall_thick):
+    """
+    Adds a rectangular tunnel composed of 4 walls to the problem.
+    
+    Args:
+        problem: The problem instance (e.g., snake_problem)
+        center_pos: np.array [x, y, z] of the tunnel center
+        orientation_axis: np.array [x, y, z] direction the tunnel runs along
+        width: Inner width of the tunnel (gap between left/right walls)
+        height: Inner height of the tunnel (gap between top/bottom walls)
+        length: Length of the tunnel
+        wall_thick: Thickness of the walls
+    """
+    
+    # 1. Normalize orientation and compute base rotation
+    # We want a rotation matrix R_tunnel that aligns the Local Y axis with orientation_axis.
+    # We assume 'Z' is up to resolve the roll ambiguity.
+    axis = orientation_axis / np.linalg.norm(orientation_axis)
+    target_y = axis
+    
+    # Heuristic to find a valid 'Right' (X) vector
+    # If axis is vertical, use X as temporary up, otherwise use Z
+    if np.abs(target_y[2]) > 0.99: 
+        tmp_up = np.array([1, 0, 0])
+    else:
+        tmp_up = np.array([0, 0, 1])
+        
+    # Construct base frame (Local Y = Tunnel Axis)
+    target_x = np.cross(target_y, tmp_up)
+    target_x /= np.linalg.norm(target_x)
+    target_z = np.cross(target_x, target_y)
+    
+    # R_tunnel maps local [x,y,z] to global orientation
+    R_tunnel = np.column_stack((target_x, target_y, target_z))
+
+    # --- 2. Create Side Walls (Left/Right) ---
+    # Logic: AddWallSet makes gap along Local Y. 
+    # To put gap along Tunnel Width (Tunnel Local X), we rotate 90 deg around Z relative to R_tunnel.
+    # Side walls should be slightly taller (height + 2*thick) to overlap corners perfectly.
+    
+    R_sides = R_tunnel @ pin.utils.rotate('z', np.pi/2)
+    pos_sides = pin.SE3(R_sides, center_pos)
+    
+    # Size vector depends on how AddWallSet interprets it. 
+    # Usually: [Wall_Length_Along_Gap, Wall_Thickness, Wall_Height]
+    # After rotation: Local X -> Tunnel Y (Length), Local Z -> Tunnel Z (Height)
+    size_sides = np.array([length, wall_thick, height + 2*wall_thick])
+    
+    problem.AddWallSet(
+        position=pos_sides,
+        size=size_sides,
+        gap=width
+    )
+
+    # --- 3. Create Top/Bottom Walls ---
+    # Logic: To put gap along Tunnel Height (Tunnel Local Z), we rotate -90 deg around X relative to R_tunnel.
+    
+    R_tb = R_tunnel @ pin.utils.rotate('x', -np.pi/2)
+    pos_tb = pin.SE3(R_tb, center_pos)
+    
+    # Size: Local X -> Tunnel X (Width), Local Z -> Tunnel Y (Length)
+    # Note: Width does not need padding if sides were padded, but padding both is safer for physics engines.
+    size_tb = np.array([width, wall_thick, length])
+    
+    problem.AddWallSet(
+        position=pos_tb,
+        size=size_tb,
+        gap=height
+    )
+
+

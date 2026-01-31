@@ -12,12 +12,12 @@ from scipy.spatial.transform import Rotation as R
 import os
 import sys
 
-
+import time
 current_dir = os.path.dirname(os.path.abspath(__file__))
 parent_dir = os.path.dirname(current_dir)
 sys.path.append(parent_dir)
 import numpy as np
-from traj_opt.snake_functions import calculate_h, get_ee_problem, get_problem, do_traj_opt, get_ee_pose
+from traj_opt.snake_functions import calculate_h, get_ee_problem, get_problem, do_traj_opt, get_ee_pose, add_square_tunnel
 
 
 def get_id():
@@ -239,7 +239,8 @@ class SnakePlanner:
                  link_length=0.05105, 
                  goal_proximity=0.04,
                  bounds=0.9,
-                 params=[0,0,0,0,0,0,0]):
+                 params=[0,0,0,0,0,0,0],
+                 obs=None):
         
         # Robot Physical Parameters
         self.num_links = num_links
@@ -255,6 +256,22 @@ class SnakePlanner:
         self.ddp_ee = get_ee_problem()
 
         self.goal_proximity = goal_proximity
+
+        self.default_wall_thick = 0.02  # 2 cm thick walls
+        self.default_gap_len = 0.25
+        self.default_gap_height = 0.32
+        self.default_gap_width = 0.3
+
+        if obs is not None:
+            for ob in obs:
+                center, direction = ob
+                add_square_tunnel(self.ddp,
+                                  center, 
+                                  direction,
+                                  width=self.default_gap_width,
+                                  height=self.default_gap_height,
+                                  length=self.default_gap_len,
+                                  wall_thick=self.default_wall_thick)
 
     def plan(self, x_init, goal_pose, max_iter=15000):
         """
@@ -321,8 +338,11 @@ class SnakePlanner:
                     continue
 
                 neighbor.H = self._lift_to_high(neighbor)
+
+                if not self._check_single_state(neighbor.H[:self.ddp.nq]):
+                    continue
                 
-                ok, traj,us,cost = do_traj_opt(self.ddp,root.H[:self.ddp_ee.nq], neighbor.H[:self.ddp_ee.nq])
+                ok, traj,us,cost = self._do_traj_opt(root.H[:self.ddp_ee.nq], neighbor.H[:self.ddp_ee.nq])
                 
                 if ok:
                     neighbor.g = root.g + cost
@@ -349,6 +369,16 @@ class SnakePlanner:
     def _lift_to_high(self, node):
         return self.serp_kin.get_joint_angles(node.data)
 
+    def _do_traj_opt(self, q_init, q_f):
+        # start_time = time.perf_counter()
+        ok, xs, us, cost = do_traj_opt(self.ddp, q_init, q_f)
+        # end_time = time.perf_counter()
+        # print(f"Trajectory optimization time: {end_time - start_time:.4f} seconds")
+        # start_time = time.perf_counter()
+        ok_c = self._check_collision(xs)
+        # end_time = time.perf_counter()
+        # print(f"Collision checking time: {end_time - start_time:.4f} seconds")
+        return ok and ok_c, xs, us, cost
 
     def _repair(self, node):
         """Recursively tries to connect to ancestors if immediate parent fails."""
@@ -360,8 +390,9 @@ class SnakePlanner:
             ancestor = ancestor.parent
         # flip ancestors
         ancestors.reverse()
+        print(f"Attempting repair with {len(ancestors)} ancestors.")
         for a in ancestors:
-            ok, traj,us,cost = do_traj_opt(self.ddp,a.H[:self.ddp_ee.nq], node.H[:self.ddp_ee.nq])
+            ok, traj,us,cost = self._do_traj_opt(a.H[:self.ddp_ee.nq], node.H[:self.ddp_ee.nq])
             if ok:
                 node.g = a.g + cost
                 node.H_traj = np.append(a.H_traj, traj, axis=0)
@@ -378,7 +409,34 @@ class SnakePlanner:
         
         return np.linalg.norm(ee_pose.translation - self.goal_pose.translation)
 
+    # def _check_collision(self,traj):
+    #     for x in traj:
+    #         q = x[:self.ddp.nq]
+    #         collision_results, n_collisions = self.ddp.collisionCheck(q)
+    #         if n_collisions>0:
+    #             return False
+    #     return True
 
+    def _check_collision(self, traj, stride=5):
+        """
+        Checks collision for every 'stride' steps.
+        Always checks the first and last point to be safe.
+        """
+        # Check start and end explicitly
+        if not self._check_single_state(traj[0]): return False
+        if not self._check_single_state(traj[-1]): return False
+
+        # Check intermediate points with stride
+        # We skip 0 and -1 because we just checked them
+        for x in traj[stride:-1:stride]:
+            if not self._check_single_state(x):
+                return False
+        return True
+    def _check_single_state(self, x):
+        q = x[:self.ddp.nq]
+        # Assuming collisionCheck returns (results, n_collisions)
+        _, n_collisions = self.ddp.collisionCheck(q)
+        return n_collisions == 0
     # Matrix Primitives
     @staticmethod
     def _Rz(theta):
@@ -400,20 +458,29 @@ class SnakePlanner:
 
 if __name__ == "__main__":
 
-    rot = np.array([[ 0.99979102,  0.00507982,  0.01980204],
-                    [-0.00532436,  0.99990998,  0.012316  ],
-                    [-0.01973769, -0.01241886,  0.99972806]])
+    rot = np.array([[1, 0, 0],
+                    [0, 1, 0],
+                    [0, 0, 1]])
 
-    pos = np.array([-0.39559905, -0.33490934,  0.26886563])
+    pos = np.array([-0.29, -0.3, 0.3]) 
     serp_kin = SerpenoidKinematics3D()
     params = [0.0, 0.0, 2*np.pi/15, 0, np.pi/2, 0.0, 0.0]
     q_init = serp_kin.get_joint_angles(params)
     x_init= np.zeros(30)
     x_init[:15]=q_init
     goal = pin.SE3(rot,pos)
+
+    # obstacles
+
+    tun1_center = np.array([-0.29, -0.3, 0.3]) 
+    tun1_dir = np.array([1, 0, 0])
+
+    obs = None
+    obs = [[tun1_center,tun1_dir]]
+
     
     # 3. Run Planner
-    planner = SnakePlanner(num_links=15, link_length=0.05105, params=params,goal_proximity=0.055)
+    planner = SnakePlanner(num_links=15, link_length=0.05105, params=params,goal_proximity=0.055,obs=obs)
     path = planner.plan(x_init=x_init, goal_pose=goal)
     
     if path is not None:
