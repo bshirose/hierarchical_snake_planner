@@ -1,4 +1,3 @@
-from ddp_problem_setting import SnakeReachingDDP
 import pinocchio as pin
 import numpy as np
 import time
@@ -6,13 +5,18 @@ import time
 from scipy.interpolate import CubicSpline
 from pinocchio.visualize import MeshcatVisualizer
 
+import os
+import sys
+current_dir = os.path.dirname(os.path.abspath(__file__))
+sys.path.append(current_dir)
 
+from ddp_problem_setting import SnakeReachingDDP
 
 def get_problem(dt=0.05, T=8.0):
     ddp = SnakeReachingDDP(
-        urdf_model_path="REU_snake_v8.urdf",
-        srdf_model_path="REU_snake_v8.srdf",
-        package_dirs="./")  
+    urdf_model_path=current_dir+"/REU_snake_v8.urdf",
+    srdf_model_path=current_dir+"/REU_snake_v8.srdf",
+    package_dirs=current_dir+"/")  
     nq = ddp.nq
     nv = ddp.nv
     nu = ddp.nu
@@ -34,10 +38,10 @@ def get_problem(dt=0.05, T=8.0):
 
 def get_ee_problem(dt=0.05, T=8.0):
     ddp_ee = SnakeReachingDDP(
-        urdf_model_path="REU_snake_v8.urdf",
-        srdf_model_path="REU_snake_v8.srdf",
-        package_dirs="./",
-        ee_frame_name="reu_module_out_16")  
+            urdf_model_path=current_dir+"/REU_snake_v8.urdf",
+            srdf_model_path=current_dir+"/REU_snake_v8.srdf",
+            package_dirs=current_dir+"/",
+            ee_frame_name="reu_module_out_16")  
     # Dimensions
     nq = ddp_ee.nq
     nv = ddp_ee.nv
