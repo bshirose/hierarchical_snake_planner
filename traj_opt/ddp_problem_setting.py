@@ -2,7 +2,6 @@ import numpy as np
 import pinocchio as pin
 import crocoddyl
 import hppfcl
-import mim_solvers
 
 from pinocchio.robot_wrapper import RobotWrapper
 
@@ -30,7 +29,7 @@ class SnakeReachingDDP():
         if package_dirs is None:
             self.robot = RobotWrapper.BuildFromURDF(
                 urdf_model_path,
-            )
+            )               
         else:
             self.robot = RobotWrapper.BuildFromURDF(
                 urdf_model_path,
@@ -270,8 +269,9 @@ class SnakeReachingDDP():
         # --------------------------------------------
         xs = np.array(self.solver.xs)
         us = np.array(self.solver.us)
+        cost = self.solver.cost
         
-        return ok, xs, us
+        return ok, xs, us, cost
     
     # =================================================
     # Collision methods

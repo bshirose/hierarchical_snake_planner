@@ -46,7 +46,7 @@ dt = 0.05
 # If x0 or xf is changed, you can pass the new value to ddp.Solve(x0,xf)
 ddp.CreateProblem(dt=dt, weights=weights, T=T)
 t = time.time()
-ok, xs, us = ddp.Solve(x0, xf, maxiter=10000)
+ok, xs, us, cost = ddp.Solve(x0, xf, maxiter=10000)
 elapsed = time.time() - t
 
 print("Solver converged:", ok)

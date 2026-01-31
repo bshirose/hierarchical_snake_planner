@@ -5,13 +5,15 @@ import time
 
 from scipy.interpolate import CubicSpline
 from pinocchio.visualize import MeshcatVisualizer
+import os
 
+current_dir = os.path.dirname(os.path.abspath(__file__))
 # Initialize ddp_ee problem with snake robot model
 # if you provide the end-effector frame name, the DDP problem will be set for end-effector reaching
 ddp_ee = SnakeReachingDDP(
-    urdf_model_path="REU_snake_v8.urdf",
-    srdf_model_path="REU_snake_v8.srdf",
-    package_dirs="./",
+    urdf_model_path=current_dir+"/REU_snake_v8.urdf",
+    srdf_model_path=current_dir+"/REU_snake_v8.srdf",
+    package_dirs=current_dir+"/",
     ee_frame_name="reu_module_out_16")  
 
 # Initial configuration and velocity (you should change it to your x0)
@@ -32,6 +34,16 @@ qf[1::2] = 0
 pin.forwardKinematics(ddp_ee.model, ddp_ee.data, qf)
 pin.updateFramePlacements(ddp_ee.model, ddp_ee.data)
 eef = ddp_ee.data.oMf[ddp_ee.ee_frame_id]
+# rot = np.array(([0,-1,0],[1,0,0],[0,0,1]))
+rot = np.array([[ 0.99979102,  0.00507982,  0.01980204],
+       [-0.00532436,  0.99990998,  0.012316  ],
+       [-0.01973769, -0.01241886,  0.99972806]])
+# rot = np.eye(3)
+pos = np.array([-0.39559905, -0.33490934,  0.26886563])
+# pos = np.array([-0.3, -0.3, 0.30])
+goal = pin.SE3(rot,pos)
+eef = goal.copy()
+
 
 # Cost weights
 weights = {
@@ -52,7 +64,7 @@ dt = 0.05
 # If x0 or eef is changed, you can pass the new value to ddp_ee.Solve(x0,eef)
 ddp_ee.CreateProblem(dt=dt, weights=weights, T=T)
 t = time.time()
-ok, xs, us = ddp_ee.Solve(x0, eef, maxiter=10000)
+ok, xs, us, cost = ddp_ee.Solve(x0, eef, maxiter=10000)
 elapsed = time.time() - t
 
 print("Solver converged:", ok)
