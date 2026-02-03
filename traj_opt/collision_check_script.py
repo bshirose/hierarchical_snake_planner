@@ -7,9 +7,9 @@ from pinocchio.visualize import MeshcatVisualizer
 
 # Initialize DDP problem with snake robot model
 ddp = SnakeReachingDDP(
-    urdf_model_path="REU_snake_v8.urdf",
-    srdf_model_path="REU_snake_v8.srdf",
-    package_dirs="./")
+    urdf_model_path="./traj_opt/REU_snake_v8.urdf",
+    srdf_model_path="./traj_opt/REU_snake_v8.srdf",
+    package_dirs="./traj_opt/")
 
 ddp.AddWallSet(
     position=pin.SE3(pin.utils.rotate('z',np.pi/2), np.zeros(3)),

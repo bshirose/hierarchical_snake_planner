@@ -8,9 +8,9 @@ from pinocchio.visualize import MeshcatVisualizer
 
 # Initialize DDP problem with snake robot model
 ddp = SnakeReachingDDP(
-    urdf_model_path="REU_snake_v8.urdf",
-    srdf_model_path="REU_snake_v8.srdf",
-    package_dirs="./")
+    urdf_model_path="./traj_opt/REU_snake_v8.urdf",
+    srdf_model_path="./traj_opt/REU_snake_v8.srdf",
+    package_dirs="./traj_opt/")
 
 # Initial configuration and velocity (you should change it to your x0)
 q0 = pin.neutral(ddp.model)

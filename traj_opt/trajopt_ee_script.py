@@ -9,9 +9,9 @@ from pinocchio.visualize import MeshcatVisualizer
 # Initialize ddp_ee problem with snake robot model
 # if you provide the end-effector frame name, the DDP problem will be set for end-effector reaching
 ddp_ee = SnakeReachingDDP(
-    urdf_model_path="REU_snake_v8.urdf",
-    srdf_model_path="REU_snake_v8.srdf",
-    package_dirs="./",
+    urdf_model_path="./traj_opt/REU_snake_v8.urdf",
+    srdf_model_path="./traj_opt/REU_snake_v8.srdf",
+    package_dirs="./traj_opt/",
     ee_frame_name="reu_module_out_16")  
 
 # Initial configuration and velocity (you should change it to your x0)
