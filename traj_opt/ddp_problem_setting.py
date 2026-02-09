@@ -2,6 +2,7 @@ import numpy as np
 import pinocchio as pin
 import crocoddyl
 import hppfcl
+# import mim_solvers
 
 from pinocchio.robot_wrapper import RobotWrapper
 
@@ -16,6 +17,7 @@ class SnakeReachingDDP():
         srdf_model_path=None,
         package_dirs=None,
         ee_frame_name=None,
+        link_frame_names=None,
         is_gravity_on=False,
         ):
         
@@ -29,7 +31,7 @@ class SnakeReachingDDP():
         if package_dirs is None:
             self.robot = RobotWrapper.BuildFromURDF(
                 urdf_model_path,
-            )               
+            )
         else:
             self.robot = RobotWrapper.BuildFromURDF(
                 urdf_model_path,
@@ -40,9 +42,13 @@ class SnakeReachingDDP():
         if not is_gravity_on:
             self.robot.model.gravity.linear[:] = 0.0
 
+        # ee tracking mod will be overrided by link tracking mod
         if ee_frame_name is not None:
             self.ee_frame_id = self.robot.model.getFrameId(ee_frame_name)
             self.tracking_mod = "ee_pose"
+        elif link_frame_names is not None:
+            self.link_frame_ids = [self.robot.model.getFrameId(name) for name in link_frame_names]
+            self.tracking_mod = "link_poses"
         else:
             self.tracking_mod = "state"
 
@@ -124,7 +130,7 @@ class SnakeReachingDDP():
         self.x_res = crocoddyl.ResidualModelState(self.state, xf, self.nu)
         w_x_reg = weights["x_reg"]
         
-        if self.tracking_mod == "ee_pose":
+        if self.tracking_mod == "ee_pose" or self.tracking_mod == "link_poses":
             w_x_reg[:self.state.nq] = 0.0  # disable vel reg if tracking ee pose
         
         x_reg, x_reg_scale = self._make_cost(self.x_res, w_x_reg)
@@ -134,7 +140,7 @@ class SnakeReachingDDP():
         terminal_cost.addCost("x_reg_term", x_reg, weights["x_reg_terminal"],True)
         
         # -------------------------
-        # End-effector regularization
+        # Pose regularization
         # -------------------------
         if self.tracking_mod == "ee_pose":
             ee_f = pin.SE3.Identity()
@@ -150,7 +156,24 @@ class SnakeReachingDDP():
             # add to running and terminal costs
             running_cost.addCost("ee_reg", ee_reg, ee_reg_scale, True)
             terminal_cost.addCost("ee_reg_term", ee_reg, weights["ee_reg_terminal"], True)
-
+            
+        elif self.tracking_mod == "link_poses":            
+            self.link_poses_res = [None] * len(self.link_frame_ids)
+            for i in range(len(self.link_frame_ids)):
+                self.link_poses_res[i] = crocoddyl.ResidualModelFramePlacement(
+                    self.state,
+                    self.link_frame_ids[i],
+                    pin.SE3.Identity(),
+                    self.nu
+                )
+                w_pose_reg = weights["link_poses_reg"][i]
+                pose_reg, pose_reg_scale = self._make_cost(self.link_poses_res[i], w_pose_reg)
+            
+                # add to running and terminal costs
+                running_cost.addCost("link_poses_reg" + str(i), pose_reg, pose_reg_scale, True)
+                terminal_cost.addCost("link_poses_reg_term" + str(i), pose_reg, weights["link_poses_reg_terminal"][i], True)
+            
+            
         # -------------------------
         # Control regularization
         # -------------------------
@@ -255,6 +278,11 @@ class SnakeReachingDDP():
         elif self.tracking_mod == "ee_pose":
             self.ee_res.reference = xf # this should be a pin.SE3
             xs_init = [x0] * (self.problem.T + 1)
+        elif self.tracking_mod == "link_poses":
+            for i in range(len(self.link_frame_ids)):
+                self.link_poses_res[i].reference = xf[i] # this should be a pin.SE3 list
+            xs_init = [x0] * (self.problem.T + 1)
+
 
         us_init = list(self.problem.quasiStatic([x0] * self.problem.T))
         
@@ -269,9 +297,8 @@ class SnakeReachingDDP():
         # --------------------------------------------
         xs = np.array(self.solver.xs)
         us = np.array(self.solver.us)
-        cost = self.solver.cost
         
-        return ok, xs, us, cost
+        return ok, xs, us, self.solver.cost
     
     # =================================================
     # Collision methods
