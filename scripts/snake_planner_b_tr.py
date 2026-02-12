@@ -601,13 +601,16 @@ class SnakePlanner:
                     continue
 
                 # Inverse Kinematics (Latent -> Joint Space)
-                h= self.r_lift_to_high(neighbor)
+                # h= self.r_lift_to_high(neighbor)
                 ok, ok_c, traj, us, cost = self._lift_and_do_traj_opt(root,neighbor)
-                if not ok and h is not None:
-                    print("halo")
+                # if not ok and h is not None:
+                #     print("halo")
                 if not ok:
                     continue
+
                 neighbor.H = traj[-1]
+                if not self._check_single_state(traj[-1]):
+                    continue
                 if ok and ok_c:
                     neighbor.g = root.g + cost
                     neighbor.H_traj = np.append(root.H_traj, traj, axis=0)
@@ -684,7 +687,8 @@ if __name__ == "__main__":
     
     # 2. Define Goal and Init
     # goal = np.array([0.3, -0.3, 0.30])
-    pos = np.array([0.5, -0.3, 0.3]) 
+    # pos = np.array([0.5, -0.3, 0.3]) 
+    pos = np.array([0.3, -0.2, 0.2]) 
     rot = np.array(([0,-1,0],[1,0,0],[0,0,1]))
     goal = pin.SE3(rot,pos)
     q_init = None # Will be auto-calculated if None, or pass np.zeros(16)
