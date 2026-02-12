@@ -59,7 +59,7 @@ def get_ee_problem(dt=0.05, T=8.0):
     ddp_ee.CreateProblem(dt=dt, weights=weights, T=T)
     return ddp_ee
 
-def get_curve_problem(dt=0.05, T=2.0):
+def get_curve_problem(dt=0.05, T=5.0):
     ddp_curve = SnakeReachingDDP(
             urdf_model_path=current_dir+"/REU_snake_v8.urdf",
             srdf_model_path=current_dir+"/REU_snake_v8.srdf",
@@ -140,8 +140,11 @@ def lift_and_do_traj_opt(ddp,q_init,frame_locs,threshold=0.05):
             np.eye(3),
             np.array(frame_locs[i])
         )
-
-    ok, xs, us, cost = ddp.Solve(x0, xf, maxiter=10000)
+    t = time.time()
+    # print("Solving trajectory optimization...")
+    ok, xs, us, cost = ddp.Solve(x0, xf, maxiter=1000)
+    elapsed = time.time() - t
+    # print("Solver converged:", ok , "Solver time:", elapsed, "s")
     qs = xs[:, :ddp.nq]
     pin.forwardKinematics(ddp.model, ddp.data, qs[-1])
     pin.updateFramePlacements(ddp.model, ddp.data)

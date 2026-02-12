@@ -3,16 +3,17 @@ clear; close all;
 rng('default');
 
 n_links = 16; % The robot has 16 joints and 16 links.
-link_length = 5.105; % module length (cm)
+link_length = 5.06; % module length (cm)
 
 
 waypoints = { 
-        [30,-30,30]',
+        [30,-20,20]',
 
     };
 T_base_initial = eye(4);
-
-load('my_data_3.mat')
+T_base_initial(1,4) = -4*link_length;
+load('my_data_2.mat')
+my_matrix = my_matrix(:,1:15);
 q_initial=my_matrix(end,:);
 % 'T_base_initial' is the starting pose of the HEAD at t=0.
 
@@ -21,12 +22,12 @@ safety_margin = 0.01;
 snake_thickness = 3;
 enable_collision_avoidance = true;
 actual_obs=[
-            22-snake_thickness -35 27 22+snake_thickness -10 37;
-            36-snake_thickness -35 27 36+snake_thickness -10 37;
-            24.5 -35 26 35.5 -10 27; 
-            24.5 -35 37 35.5 -10 38; 
-            20 -38 20 40 -35 45;
-            ];
+       37.5, -32.5,   8.5,  41.5,  -7.5,  31.5;
+        18.5, -32.5,   8.5,  22.5,  -7.5,  31.5;
+       22.5, -32.5,  27.5,  37.5,  -7.5,  31.5;
+      22.5, -32.5,   8.5,  37.5,  -7.5,  12.5;
+      20.5, -32.5,  10.5, 39.5,  -36,  29.5
+      ]
 
 
 

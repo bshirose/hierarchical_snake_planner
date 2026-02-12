@@ -97,7 +97,7 @@ class SnakePlanner:
     
 
 
-        self.default_wall_thick = 0.05  # 2 cm thick walls
+        self.default_wall_thick = 0.04  # 2 cm thick walls
         self.default_gap_len = 0.3
         self.default_gap_height = 0.2
         self.default_gap_width = 0.2
@@ -120,7 +120,10 @@ class SnakePlanner:
                                   height=self.default_gap_height,
                                   length=self.default_gap_len,
                                   wall_thick=self.default_wall_thick)
+        back = np.array([20.5, -32.5,  10.5, 39.5,  -36,  29.5])/100
+
         self.obstacles = walls
+        self.obstacles.append(back)
     # =========================================================================
     #    Helper Methods (Dynamics, Kinematics, Collision, Heuristics)
     # =========================================================================
@@ -233,12 +236,15 @@ class SnakePlanner:
 
         q_init = parent.H[:self.ddp.nq] if parent is not None else np.zeros(self.ddp.nq)
         link_locs = self._generate_b_curve_points(node)
+        print("starting traj opt")
         true_link_locs = [self.first_locs[i] for i in range(self.first_locs.shape[0])]
         for i in range(len(link_locs)):
             true_link_locs.append(link_locs[i])
         link_locs = true_link_locs
         ok, traj, us, cost = lift_and_do_traj_opt(self.ddp_bb, q_init, link_locs)
+        print("traj opt done, starting collision check")
         ok_c = self._check_collision(traj)
+        print("collision check done")
         return ok, ok_c, traj, us, cost
 
 
@@ -451,7 +457,7 @@ class SnakePlanner:
         return np.linalg.norm(ee_pose.translation - self.goal_pose.translation)
     
 
-    def _check_collision(self, traj, stride=5):
+    def _check_collision(self, traj, stride=1):
         """
         Checks collision for every 'stride' steps.
         Always checks the first and last point to be safe.
@@ -679,11 +685,11 @@ if __name__ == "__main__":
     # ])
     # obstacles = actual_obs / 100.0  # Scale to meters
     # obstacles = None
-    tun1_center = np.array([0.5, -0.3, 0.3]) 
+    tun1_center = np.array([0.3, -0.2, 0.2]) 
     tun1_dir = np.array([0, 1, 0])
     obs_pin = None
     obs_pin = [[tun1_center,tun1_dir]]
-    obs_pin = None
+    # obs_pin = None
     
     # 2. Define Goal and Init
     # goal = np.array([0.3, -0.3, 0.30])
