@@ -59,6 +59,104 @@ def get_ee_problem(dt=0.05, T=8.0):
     ddp_ee.CreateProblem(dt=dt, weights=weights, T=T)
     return ddp_ee
 
+def get_curve_problem(dt=0.05, T=2.0):
+    ddp_curve = SnakeReachingDDP(
+            urdf_model_path=current_dir+"/REU_snake_v8.urdf",
+            srdf_model_path=current_dir+"/REU_snake_v8.srdf",
+            package_dirs=current_dir+"/",
+            link_frame_names=[
+                "reu_module_out_1",
+                "reu_module_out_2",
+                "reu_module_out_3",
+                "reu_module_out_4",
+                "reu_module_out_5",
+                "reu_module_out_6",
+                "reu_module_out_7",
+                "reu_module_out_8",
+                "reu_module_out_9",        
+                "reu_module_out_10",
+                "reu_module_out_11",
+                "reu_module_out_12",
+                "reu_module_out_13",
+                "reu_module_out_14",
+                "reu_module_out_15",
+                "reu_module_out_16"])  
+    # Dimensions
+    nq = ddp_curve.nq
+    nv = ddp_curve.nv
+    nu = ddp_curve.nu
+    # Cost weights
+
+    w_x_reg = np.array(0.01 * np.ones(nq + nv))
+    w_x_reg[0:4] = 1e5
+    weights = {
+    "x_reg": w_x_reg,  # Use the custom vector here
+    # "link_poses_reg": [np.array(1.0 * np.ones(6))] * 16,
+    "link_poses_reg": [np.hstack((
+        np.array([1e3]*3),
+        np.array([0]*3),
+        )),] * 16,
+    "u_reg": np.array(0.1 * np.ones(nu)),
+    "x_reg_terminal": 1e-2,
+    "link_poses_reg_terminal": [1e-1] *16,
+    "u_reg_terminal": 1e-2,
+    }
+
+    # weights = {
+    #     "x_reg": np.array(0.01 * np.ones(nq + nv)),
+    #     "link_poses_reg": [np.hstack((
+    #         np.array([1e3]*3),
+    #         np.array([0]*3),
+    #         )),] * 16,
+    #     "u_reg": np.array(0.1 * np.ones(nu)),
+    #     "x_reg_terminal": 1e-2,
+    #     "link_poses_reg_terminal": [1e-1] *16,
+    #     "u_reg_terminal": 1e-2,
+    # }
+
+    x_lb = -np.inf * np.ones(ddp_curve.state.nx)
+    x_ub =  np.inf * np.ones(ddp_curve.state.nx)
+    x_lb[:4] = 0.0
+    x_ub[:4] = 0.0
+
+    # ddp_curve.CreateProblem(dt=dt, weights=weights, T=T)
+    ddp_curve.CreateProblem(
+        dt=dt, 
+        weights=weights, 
+        T=T, 
+        x_lb=x_lb, 
+        x_ub=x_ub
+    )
+    return ddp_curve
+
+def lift_and_do_traj_opt(ddp,q_init,frame_locs,threshold=0.05):
+    q0 = q_init.copy()
+    v0 = np.zeros(ddp.model.nv)
+    x0 = np.concatenate([q0, v0])
+
+    xf = [None] * 16
+    for i in range(16):
+        xf[i] = pin.SE3(
+            np.eye(3),
+            np.array(frame_locs[i])
+        )
+
+    ok, xs, us, cost = ddp.Solve(x0, xf, maxiter=10000)
+    qs = xs[:, :ddp.nq]
+    pin.forwardKinematics(ddp.model, ddp.data, qs[-1])
+    pin.updateFramePlacements(ddp.model, ddp.data)
+    total_error = 0.0
+    for i in range(16):
+        xf_a = ddp.robot.data.oMf[ddp.link_frame_ids[i]]
+        total_error = np.max([total_error, np.linalg.norm(xf_a.translation - xf[i].translation)])
+        # if np.linalg.norm(xf_a.translation - xf[i].translation) > 1e-3:
+        #     total_error += np.linalg.norm(xf_a.translation - xf[i].translation)
+    
+    if total_error > threshold:
+        ok = False
+    
+    return ok,xs,us,cost
+
 def do_traj_opt(ddp,q_init,q_f):
     q0 = q_init.copy()
     v0 = np.zeros(ddp.model.nv)

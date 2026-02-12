@@ -19,7 +19,7 @@ import time
 current_dir = os.path.dirname(os.path.abspath(__file__))
 parent_dir = os.path.dirname(current_dir)
 sys.path.append(parent_dir)
-from traj_opt.snake_functions import calculate_h, get_ee_problem, get_problem, do_traj_opt, get_ee_pose, add_square_tunnel, get_tunnel_wall_aabbs
+from traj_opt.snake_functions import calculate_h, get_ee_problem, get_problem, do_traj_opt, get_ee_pose, add_square_tunnel, get_tunnel_wall_aabbs, get_curve_problem, lift_and_do_traj_opt
 
 
 class Node:
@@ -34,6 +34,7 @@ class Node:
         self.h = 0        # Heuristic cost
         self.f = 0        # Total cost
         self.node_id = node_id
+        self.b_curve_points=[]
 
     @property
     def priority(self):
@@ -50,7 +51,7 @@ class SnakePlanner:
 
     def __init__(self, 
                  num_links=16, 
-                 link_length=0.05734,
+                 link_length=0.0506,
                 #  link_length=0.05105, 
                  link_mass=0.250,
                  base_loc=None,
@@ -63,14 +64,15 @@ class SnakePlanner:
         # Robot Physical Parameters
         self.num_links = num_links
         self.link_length = link_length
-        # self.snake_length = num_links * link_length
-        self.snake_length = 0.86 # Adjusted to match actual robot length (16 links * 5.105 cm + some extra for joints)
+        self.snake_length = num_links * link_length
+        # self.snake_length = 0.86 # Adjusted to match actual robot length (16 links * 5.105 cm + some extra for joints)
         self.link_mass = link_mass
         self.base_loc = base_loc if base_loc is not None else np.array([0, 0, 0])
         self.base_tf = np.eye(4)  # Assuming base rotation is identity for now
 
         self.ddp = get_problem()
         self.ddp_ee = get_ee_problem()
+        self.ddp_bb = get_curve_problem()
         
         # Planning Constraints & Thresholds
         # self.torque_limit = torque_limit
@@ -82,13 +84,17 @@ class SnakePlanner:
         # Search Parameters
         self.delta_t = 0.03
         self.delta_tl = 0.1
-        self.delta_cl = 0.25
+        self.delta_cl = 0.15
         self.interp_steps = 10
         self.cost_grid_size = cost_grid_size
         self.dt = 0.1  # Time step for dynamics check
 
         # Internal Counter
         self._node_counter = 0
+
+        self.first_locs = np.load("first_four_locs_shifted.npy")
+        self.first_locs = self.first_locs[:3,:]
+    
 
 
         self.default_wall_thick = 0.05  # 2 cm thick walls
@@ -154,8 +160,41 @@ class SnakePlanner:
                     neighbors.append(new_node)
         return neighbors
     
-  
-    def _lift_to_high(self, node):
+    def _generate_b_curve_points(self, node):
+        """
+        Maps latent Bezier parameters to joint angles via IK.
+        Now includes Warm Starting and Feasibility Checks.
+        """
+        link_locs = []
+        control = node.data[:3]
+        end = node.data[3:]
+        
+        # Generate target points from Bezier curve
+        for i in range(self.num_links + 1):
+            s = i / self.num_links
+            # Quadratic Bezier
+            loc = (1-s)*(1-s)*self.base_loc + 2*(1-s)*s*control + s*s*end
+            link_locs.append(loc)
+            
+        # link_locs = np.array(link_locs).T
+
+        # initial_guess = node.parent.H[:self.ddp.nq] if node.parent is not None else None
+        
+        # # Solve IK
+        # angles, success = self._solve_ik(link_locs, initial_guess)
+        
+        # if not success:
+        #     return None
+        
+        # state = np.zeros(self.ddp.nq + self.ddp.nv)
+        # state[:self.ddp.nq] = angles
+        # state[self.ddp.nq:] = np.zeros(self.ddp.nv)
+        
+            
+        return link_locs
+
+
+    def r_lift_to_high(self, node):
         """
         Maps latent Bezier parameters to joint angles via IK.
         Now includes Warm Starting and Feasibility Checks.
@@ -174,21 +213,36 @@ class SnakePlanner:
         link_locs = np.array(link_locs).T
 
         initial_guess = node.parent.H[:self.ddp.nq] if node.parent is not None else None
+        if initial_guess is not None:
+            initial_guess = initial_guess[3:]
         
         # Solve IK
-        angles, success = self._solve_ik(link_locs, initial_guess)
+        angles, success = self.r_solve_ik(link_locs, initial_guess)
         
         if not success:
             return None
         
         state = np.zeros(self.ddp.nq + self.ddp.nv)
-        state[:self.ddp.nq] = angles
+        state[3:self.ddp.nq] = angles
         state[self.ddp.nq:] = np.zeros(self.ddp.nv)
         
             
         return state
 
-    def _solve_ik(self, target_pts, initial_q=None):
+    def _lift_and_do_traj_opt(self,parent, node):
+
+        q_init = parent.H[:self.ddp.nq] if parent is not None else np.zeros(self.ddp.nq)
+        link_locs = self._generate_b_curve_points(node)
+        true_link_locs = [self.first_locs[i] for i in range(self.first_locs.shape[0])]
+        for i in range(len(link_locs)):
+            true_link_locs.append(link_locs[i])
+        link_locs = true_link_locs
+        ok, traj, us, cost = lift_and_do_traj_opt(self.ddp_bb, q_init, link_locs)
+        ok_c = self._check_collision(traj)
+        return ok, ok_c, traj, us, cost
+
+
+    def r_solve_ik(self, target_pts, initial_q=None):
         """
         Optimizes joint angles to match target points.
         Includes Regularization to prevent joint flipping.
@@ -205,7 +259,7 @@ class SnakePlanner:
         
         def objective(q):
             # 1. Primary Objective: Match the Bezier Curve positions
-            P_world, _ = self._forward_kinematics(q)
+            P_world, _ = self.r_forward_kinematics(q)
             diff = P_world - target_pts
             fit_error = np.sum(diff**2)
             
@@ -226,14 +280,17 @@ class SnakePlanner:
         
         # --- FEASIBILITY THRESHOLD ---
         # Check if the robot actually matched the curve.
-        P_final, _ = self._forward_kinematics(result.x)
-        final_error = np.sum((P_final - target_pts)**2)
+        P_final, _ = self.r_forward_kinematics(result.x)
+        final_error = np.sum((P_final.T - target_pts.T)**2)
+        final_error = 0
+        for i in range(P_final.T.shape[0]):
+            final_error += np.linalg.norm(P_final.T[i] - target_pts.T[i])
         
         is_feasible = final_error < 0.05  # Adjustable threshold
         
         return result.x, is_feasible
     
-    def _forward_kinematics(self, q):
+    def r_forward_kinematics(self, q):
         """Computes positions of all joints and EE transform."""
         q = np.atleast_1d(q)
         
@@ -302,126 +359,9 @@ class SnakePlanner:
             ok, traj,us,cost = self._do_traj_opt(a.H[:self.ddp_ee.nq], node.H[:self.ddp_ee.nq])
             if ok:
                 node.g = a.g + cost
-                node.H_traj = np.append(a.H_traj, traj, axis=0)
-                return True
-        return False
-
-    # def _check_trajectory_torques(self, traj):
-    #     """Verifies if trajectory respects torque limits."""
-    #     # Static check start/end
-    #     if not self._check_static_torque(traj[0]) or not self._check_static_torque(traj[-1]):
-    #         return False
-
-    #     # Dynamic check
-    #     for i in range(len(traj) - 2):
-    #         q = traj[i]
-    #         q_next = traj[i+1]
-    #         q_n_next = traj[i+2]
-            
-    #         q_dot = (q_next - q) / self.dt
-    #         q_dot_next = (q_n_next - q_next) / self.dt
-    #         q_ddot = (q_dot_next - q_dot) / self.dt
-            
-    #         tau = self._inverse_dynamics_rnea(q, q_dot, q_ddot)
-    #         # Ignore jammed links
-    #         tau[:self.jammed_links] = 0
-            
-    #         if np.any(np.abs(tau) > self.torque_limit):
-    #             return False
-    #     return True
-
-    # def _check_static_torque(self, q):
-    #     zeros = np.zeros(self.num_links)
-    #     tau = self._inverse_dynamics_rnea(q, zeros, zeros)
-    #     tau[:self.jammed_links] = 0
-    #     return not np.any(np.abs(tau) > self.torque_limit)
-
-    # def _inverse_dynamics_rnea(self, q, q_dot, q_ddot):
-    #     """Recursive Newton-Euler Algorithm for dynamics."""
-    #     g_vec = np.array([0, 0, 9.81]) # Gravity
-    #     n_links = self.num_links
-    #     L = self.link_length
-    #     m = self.link_mass
-        
-    #     CoM = np.array([L/2, 0, 0])
-    #     I_CoM = np.diag([0, (1/12)*m*L**2, (1/12)*m*L**2])
-        
-    #     z_axis = np.array([0, 0, 1])
-    #     y_axis = np.array([0, 1, 0])
-
-    #     w = np.zeros((3, n_links + 1))
-    #     w_dot = np.zeros((3, n_links + 1))
-    #     a = np.zeros((3, n_links + 1))
-    #     ac = np.zeros((3, n_links + 1))
-    #     a[:, 0] = -g_vec # Base acceleration due to gravity
-
-    #     # Forward Pass
-    #     for i in range(n_links):
-    #         if i % 2 == 0: 
-    #             c, s = np.cos(q[i]), np.sin(q[i])
-    #             R_w_b = np.array([[c, -s, 0], [s, c, 0], [0, 0, 1]])
-    #             axis = z_axis
-    #         else:
-    #             c, s = np.cos(q[i]), np.sin(q[i])
-    #             R_w_b = np.array([[c, 0, s], [0, 1, 0], [-s, 0, c]])
-    #             axis = y_axis
-            
-    #         R_b_w = R_w_b.T
-    #         w[:, i+1] = R_b_w @ w[:, i] + q_dot[i] * axis
-    #         w_dot[:, i+1] = R_b_w @ w_dot[:, i] + np.cross(R_b_w @ w[:, i], q_dot[i] * axis) + q_ddot[i] * axis
-            
-    #         p_link = np.array([L, 0, 0])
-    #         a_prev = a[:, i] + np.cross(w_dot[:, i], p_link) + np.cross(w[:, i], np.cross(w[:, i], p_link))
-    #         a[:, i+1] = R_b_w @ a_prev
-    #         ac[:, i+1] = a[:, i+1] + np.cross(w_dot[:, i+1], CoM) + np.cross(w[:, i+1], np.cross(w[:, i+1], CoM))
-
-    #     # Backward Pass
-    #     f = np.zeros((3, n_links + 1))
-    #     n = np.zeros((3, n_links + 1))
-    #     tau = np.zeros(n_links)
-
-    #     for i in range(n_links - 1, -1, -1):
-    #         F = m * ac[:, i+1]
-    #         N = I_CoM @ w_dot[:, i+1] + np.cross(w[:, i+1], I_CoM @ w[:, i+1])
-    #         p_link = np.array([L, 0, 0])
-
-    #         if i == n_links - 1:
-    #             f[:, i] = F
-    #             n[:, i] = N + np.cross(CoM, F)
-    #         else:
-    #             next_idx = i + 1
-    #             if next_idx % 2 == 0:
-    #                 c, s = np.cos(q[next_idx]), np.sin(q[next_idx])
-    #                 R_next = np.array([[c, -s, 0], [s, c, 0], [0, 0, 1]]).T
-    #             else:
-    #                 c, s = np.cos(q[next_idx]), np.sin(q[next_idx])
-    #                 R_next = np.array([[c, 0, s], [0, 1, 0], [-s, 0, c]]).T
-                
-    #             f[:, i] = R_next @ f[:, i+1] + F
-    #             n[:, i] = N + R_next @ n[:, i+1] + np.cross(CoM, F) + np.cross(p_link, R_next @ f[:, i+1])
-
-    #         axis = z_axis if i % 2 == 0 else y_axis
-    #         tau[i] = np.dot(n[:, i], axis)
-            
-    #     return tau
-
-    # def _is_collision_free(self, q):
-    #     if len(self.obstacles) == 0:
-    #         return True
-        
-    #     P_world, _ = self._forward_kinematics(q)
-    #     n_links = P_world.shape[1] - 1
-        
-    #     # Check link segments
-    #     for i in range(n_links):
-    #         p1 = P_world[:, i]
-    #         p2 = P_world[:, i+1]
-    #         # Discretize link
-    #         for t in np.linspace(0, 1, 51): 
-    #             p = (1 - t) * p1 + t * p2
-    #             if self._is_point_in_obstacle(p):
-    #                 return False
-    #     return True
+                # node.H_traj = np.append(a.H_traj, traj, axis=0)
+                return True, traj,us,cost
+        return False, None, None, None
 
     def _is_point_in_obstacle(self, p):
         # Vectorized check could be faster, but keeping explicit loop for clarity
@@ -493,6 +433,8 @@ class SnakePlanner:
     def _do_traj_opt(self, q_init, q_f):
         # start_time = time.perf_counter()
         ok, xs, us, cost = do_traj_opt(self.ddp, q_init, q_f)
+        if not ok:
+            return False, None, None, None
         # end_time = time.perf_counter()
         # print(f"Trajectory optimization time: {end_time - start_time:.4f} seconds")
         # start_time = time.perf_counter()
@@ -504,8 +446,8 @@ class SnakePlanner:
 
     def _calculate_ee_diff(self, node):
         ee_pose = get_ee_pose(self.ddp_ee, node.H[:self.ddp_ee.nq])
-        _, my_calc_pose = self._forward_kinematics(node.H[:self.ddp.nq])
-        print("EE FK pos:", my_calc_pose[0:3,3], "Pin pos:", ee_pose.translation)
+        # _, my_calc_pose = self._forward_kinematics(node.H[:self.ddp.nq])
+        # print("EE FK pos:", my_calc_pose[0:3,3], "Pin pos:", ee_pose.translation)
         return np.linalg.norm(ee_pose.translation - self.goal_pose.translation)
     
 
@@ -596,7 +538,12 @@ class SnakePlanner:
         ])
         
         root = Node(initial_latent, self._get_id())
-        root.H = x_init if x_init is not None else self._lift_to_high(root)
+        ok,ok_c,traj,us,cost = self._lift_and_do_traj_opt(root.parent,root)
+        if not ok or not ok_c:
+            print("Initial trajectory optimization failed. Check if the goal is reachable or if the initial guess is valid.")
+            return None
+        root.H = traj[-1]
+        # root.H = x_init if x_init is not None else self._lift_to_high(root)
         
         # Recalculate latent end-point to match actual FK of q_init if provided
         # _, ee_tm = self._forward_kinematics(root.H)
@@ -646,7 +593,7 @@ class SnakePlanner:
             # Expand Neighbors
             neighbors = self._get_neighbors(current_node)
             a=1
-
+            print("current node:",current_node.data)
             
             for neighbor in neighbors:
                 neighbor_sig = tuple(np.round(neighbor.data, 2))
@@ -654,28 +601,50 @@ class SnakePlanner:
                     continue
 
                 # Inverse Kinematics (Latent -> Joint Space)
-                neighbor.H = self._lift_to_high(neighbor)
-                if neighbor.H is None:
+                h= self.r_lift_to_high(neighbor)
+                ok, ok_c, traj, us, cost = self._lift_and_do_traj_opt(root,neighbor)
+                if not ok and h is not None:
+                    print("halo")
+                if not ok:
                     continue
-                # Check Static Collision (Pose)
-                if not self._check_single_state(neighbor.H[:self.ddp.nq]):  
-                    continue
-                
-                # Check Dynamic Feasibility (Trajectory)
-                ok, traj, us, cost = self._do_traj_opt(root.H[:self.ddp.nq], neighbor.H[:self.ddp.nq])
-                
-                if ok:
-                    neighbor.g = root.g + 1
+                neighbor.H = traj[-1]
+                if ok and ok_c:
+                    neighbor.g = root.g + cost
                     neighbor.H_traj = np.append(root.H_traj, traj, axis=0)
                     if neighbor not in open_list:
                         open_list.append(neighbor)
-                else:
+
+                if not ok_c:
                     # Repair strategy: try connecting to parent's parent
-                    repaired_ok = self._repair(neighbor)
+                    repaired_ok, traj, us, cost = self._repair(neighbor)
                     if repaired_ok and neighbor not in open_list:
                         open_list.append(neighbor)
+                        neighbor.H_traj = np.append(root.H_traj, traj, axis=0)
+                        neighbor.g = neighbor.g + cost
                     else:
                         continue
+                # neighbor.H = self._lift_to_high(neighbor)
+                # if neighbor.H is None:
+                #     continue
+                # # Check Static Collision (Pose)
+                # if not self._check_single_state(neighbor.H[:self.ddp.nq]):  
+                #     continue
+                
+                # Check Dynamic Feasibility (Trajectory)
+                # ok, traj, us, cost = self._do_traj_opt(root.H[:self.ddp.nq], neighbor.H[:self.ddp.nq])
+                
+                # if ok:
+                #     neighbor.g = root.g + 1
+                #     neighbor.H_traj = np.append(root.H_traj, traj, axis=0)
+                #     if neighbor not in open_list:
+                #         open_list.append(neighbor)
+                # else:
+                #     # Repair strategy: try connecting to parent's parent
+                #     repaired_ok = self._repair(neighbor)
+                #     if repaired_ok and neighbor not in open_list:
+                #         open_list.append(neighbor)
+                #     else:
+                #         continue
 
                 # Update Heuristic based on actual IK result
                 # _, ee_tm = self._forward_kinematics(neighbor.H)
@@ -711,6 +680,7 @@ if __name__ == "__main__":
     tun1_dir = np.array([0, 1, 0])
     obs_pin = None
     obs_pin = [[tun1_center,tun1_dir]]
+    obs_pin = None
     
     # 2. Define Goal and Init
     # goal = np.array([0.3, -0.3, 0.30])
@@ -720,7 +690,7 @@ if __name__ == "__main__":
     q_init = None # Will be auto-calculated if None, or pass np.zeros(16)
     
     # 3. Run Planner
-    planner = SnakePlanner(num_links=15, obs=obs_pin)
+    planner = SnakePlanner(num_links=12, obs=obs_pin)
     path = planner.plan(x_init=None, goal_pose=goal)
     
     if path is not None:
