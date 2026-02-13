@@ -87,17 +87,15 @@ def get_curve_problem(dt=0.05, T=10.0):
     nu = ddp_curve.nu
     # Cost weights
 
-    w_x_reg = np.array(0.01 * np.ones(nq + nv))
-    w_x_reg[0:4] = 1e5
     weights = {
-    "x_reg": w_x_reg,  # Use the custom vector here
+    "x_reg": np.array(1.0 * np.ones(nq + nv)),
     # "link_poses_reg": [np.array(1.0 * np.ones(6))] * 16,
     "link_poses_reg": [np.hstack((
-        np.array([1e3]*3),
+        np.array([1e1]*3),
         np.array([0]*3),
         )),] * 15 + [np.hstack((
-        np.array([1e3]*3),
-        np.array([5]*3),
+        np.array([1e1]*3),
+        np.array([0.5]*3),
         ))],
     # "link_poses_reg": [np.hstack((
     #     np.array([1e3]*3),
@@ -125,18 +123,23 @@ def get_curve_problem(dt=0.05, T=10.0):
     x_ub =  np.inf * np.ones(ddp_curve.state.nx)
     x_lb[:4] = 0.0
     x_ub[:4] = 0.0
-
+    u_lb = -4 * np.ones(ddp_curve.nu)
+    u_ub =  4 * np.ones(ddp_curve.nu)
+    u_lb[:4] = -400 * np.ones(4)
+    u_ub[:4] = 400 * np.ones(4)
     # ddp_curve.CreateProblem(dt=dt, weights=weights, T=T)
     ddp_curve.CreateProblem(
         dt=dt, 
         weights=weights, 
         T=T, 
         x_lb=x_lb, 
-        x_ub=x_ub
+        x_ub=x_ub,
+        u_lb=u_lb,
+        u_ub=u_ub
     )
     return ddp_curve
 
-def lift_and_do_traj_opt(ddp,q_init,frame_locs,threshold=0.05,goal=None):
+def lift_and_do_traj_opt(ddp,q_init,frame_locs,threshold=0.1,goal=None):
     q0 = q_init.copy()
     v0 = np.zeros(ddp.model.nv)
     x0 = np.concatenate([q0, v0])

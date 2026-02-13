@@ -30,9 +30,27 @@ clear; clc; close all;
 %      error('Data file not found.');
 % end
 
-load('my_data_2_hope.mat')
+load('data_torq_limts.mat')
 my_matrix = my_matrix(:,1:15);
 q_traj=my_matrix';
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% n_interp_points = 5; % We are interpolating the first 5 points
+% n_intra_points = 20;
+% q_startup = q_traj(:, 1:n_interp_points);
+% q_remainder = q_traj(:, n_interp_points+1:end);
+% t_original = 1:n_interp_points;
+% t_interp = linspace(1, n_interp_points, (n_interp_points-1)*n_intra_points + 1);
+% q_startup_interp = spline(t_original, q_startup, t_interp);
+% q_traj = [q_startup_interp, q_remainder];
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+
+
+
+
+
 
 % --- Define Time Step (CRITICAL) ---
 % If your data file has a time vector, calculate dt from it.
@@ -41,7 +59,7 @@ if exist('full_time_vector', 'var')
     dt = full_time_vector(2) - full_time_vector(1);
     fprintf('Detected time step from data: dt = %.4f s\n', dt);
 else
-    dt = 0.5; % <--- SET THIS if you don't have a time vector
+    dt = 0.01; 
     fprintf('Using manual time step: dt = %.4f s\n', dt);
     num_steps = size(q_traj, 2);
     full_time_vector = 0:dt:(num_steps-1)*dt;
@@ -70,7 +88,7 @@ gravity_vec = [0; 0; -9.81]; % Gravity vector in m/s^2
 
 % Ensure link length is defined. 
 if ~exist('link_length', 'var')
-    link_length = 14; % Default to 14cm if missing
+    link_length = 5.06; % Default to 14cm if missing
 end
 link_length_m = link_length / 100; % Convert cm to m
 
