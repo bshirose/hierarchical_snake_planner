@@ -57,8 +57,8 @@ class SnakePlanner:
                  base_loc=None,
                  torque_limit=16,
                  goal_proximity=0.04,
-                 cost_grid_size=0.03,
-                 bounds=0.9,
+                 cost_grid_size=0.01,
+                 bounds=0.65,
                  obs = None):
         
         # Robot Physical Parameters
@@ -473,7 +473,7 @@ class SnakePlanner:
         ee_pose = get_ee_pose(self.ddp_ee, node.H[:self.ddp_ee.nq])
         return np.linalg.norm(ee_pose.translation - self.goal_pose.translation)
     
-    def _check_collision(self, traj, stride=1):
+    def _check_collision(self, traj, stride=5):
         if not self._check_single_state(traj[0]): return False
         if not self._check_single_state(traj[-1]): return False
         for x in traj[stride:-1:stride]:
@@ -522,9 +522,9 @@ class SnakePlanner:
         self._node_counter = 0
         self.goal_pose = goal_pose
         print("Generating cost field...")
-        bounds_tuple = ((-self.bounds_limit, self.bounds_limit), 
+        bounds_tuple = ((-0.1, self.bounds_limit), 
                         (-self.bounds_limit, self.bounds_limit), 
-                        (-self.bounds_limit, self.bounds_limit))
+                        (-0.1, self.bounds_limit))
         self.cost_map = self._generate_cost_field(self.goal_pose.translation, bounds_tuple)
         print("Cost field generated.")
 
