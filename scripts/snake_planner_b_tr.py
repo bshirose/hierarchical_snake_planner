@@ -83,6 +83,7 @@ class SnakePlanner:
         
         # Search Parameters
         self.delta_t = 0.03
+        self.delta_ts = 0.01
         self.delta_tl = 0.1
         self.delta_cl = 0.15
         self.interp_steps = 10
@@ -99,8 +100,8 @@ class SnakePlanner:
 
         self.default_wall_thick = 0.04  # 2 cm thick walls
         self.default_gap_len = 0.3
-        self.default_gap_height = 0.2
-        self.default_gap_width = 0.2
+        self.default_gap_height = 0.12
+        self.default_gap_width = 0.12
         walls =[]
         if obs is not None:
             for ob in obs:
@@ -120,7 +121,7 @@ class SnakePlanner:
                                   height=self.default_gap_height,
                                   length=self.default_gap_len,
                                   wall_thick=self.default_wall_thick)
-        back = np.array([20.5, -32.5,  10.5, 39.5,  -36,  29.5])/100
+        back = np.array([20, -45,  10, 50,  -35,  30])/100
 
         self.obstacles = walls
         self.obstacles.append(back)
@@ -131,26 +132,26 @@ class SnakePlanner:
     def _get_id(self):
         self._node_counter += 1
         return self._node_counter
-
     def _get_neighbors(self, node):
         """Generates neighbors by perturbing control points and end points."""
         neighbors = []
+        import itertools
         
-        # Perturbations defined in original code
-        moves = [
-            (range(3, 6), self.delta_tl), # Perturb End Point
-            (range(3, 6), self.delta_t),  # Fine Perturb End Point
-            (range(3), self.delta_cl)     # Perturb Control Point
+        # 1. Axis-Aligned Moves (Large steps)
+        # We keep these restricted to axes to prevent combinatorial explosion on large jumps
+        axis_moves = [
+            (range(3, 6), self.delta_tl), # Perturb End Point (Large)
+            (range(3), self.delta_cl)    # Perturb Control Point (Large)
         ]
 
-        for indices, delta in moves:
+        for indices, delta in axis_moves:
             for dx in [-delta, delta]:
                 for ind in indices:
                     new_data = copy(node.data)
                     new_data[ind] += dx
                     new_data = np.round(new_data, decimals=2)
                     
-                    # Check arc length constraint (snake shouldn't stretch too much)
+                    # Check arc length constraint
                     if self._check_arc_length(new_data[3:6], new_data[:3]):
                         continue
                         
@@ -161,7 +162,75 @@ class SnakePlanner:
                     new_node = Node(new_data, self._get_id())
                     new_node.parent = node
                     neighbors.append(new_node)
+
+        # 2. Cube/Corner Moves (Small/Fine steps)
+        # Generates all corners and diagonals (26-connected neighborhood)
+        cube_moves = [
+            (range(3, 6), self.delta_t), # Perturb End Point (Fine)
+            (range(3, 6), self.delta_ts),     # Perturb Control Point (Fine)
+        ]
+
+        for indices, delta in cube_moves:
+            # Generate all combinations of {-delta, 0, delta} for the 3 dimensions
+            # This creates the box/cube corners and diagonals
+            perturbations = itertools.product([-delta, 0, delta], repeat=3)
+            
+            for p in perturbations:
+                # Skip the case where there is no movement (0, 0, 0)
+                if all(x == 0 for x in p):
+                    continue
+
+                new_data = copy(node.data)
+                
+                # Apply the perturbation to the current subset of indices (e.g., x,y,z)
+                valid_move = True
+                for i, offset in enumerate(p):
+                    new_data[indices[i]] += offset
+                
+                new_data = np.round(new_data, decimals=2)
+                
+                if self._check_arc_length(new_data[3:6], new_data[:3]):
+                    continue
+                
+                if not self._check_bounds(new_data):
+                    continue
+                    
+                new_node = Node(new_data, self._get_id())
+                new_node.parent = node
+                neighbors.append(new_node)
+                
         return neighbors
+
+    # def _get_neighbors(self, node):
+    #     """Generates neighbors by perturbing control points and end points."""
+    #     neighbors = []
+        
+    #     # Perturbations defined in original code
+    #     moves = [
+    #         (range(3, 6), self.delta_tl), # Perturb End Point
+    #         (range(3, 6), self.delta_t),  # Fine Perturb End Point
+    #         (range(3), self.delta_cl)     # Perturb Control Point
+    #     ]
+
+    #     for indices, delta in moves:
+    #         for dx in [-delta, delta]:
+    #             for ind in indices:
+    #                 new_data = copy(node.data)
+    #                 new_data[ind] += dx
+    #                 new_data = np.round(new_data, decimals=2)
+                    
+    #                 # Check arc length constraint (snake shouldn't stretch too much)
+    #                 if self._check_arc_length(new_data[3:6], new_data[:3]):
+    #                     continue
+                        
+    #                 # Check workspace bounds
+    #                 if not self._check_bounds(new_data):
+    #                     continue
+                        
+    #                 new_node = Node(new_data, self._get_id())
+    #                 new_node.parent = node
+    #                 neighbors.append(new_node)
+    #     return neighbors
     
     def _generate_b_curve_points(self, node):
         """
@@ -236,15 +305,16 @@ class SnakePlanner:
 
         q_init = parent.H[:self.ddp.nq] if parent is not None else np.zeros(self.ddp.nq)
         link_locs = self._generate_b_curve_points(node)
-        print("starting traj opt")
+        # print("starting traj opt")
         true_link_locs = [self.first_locs[i] for i in range(self.first_locs.shape[0])]
         for i in range(len(link_locs)):
             true_link_locs.append(link_locs[i])
         link_locs = true_link_locs
-        ok, traj, us, cost = lift_and_do_traj_opt(self.ddp_bb, q_init, link_locs)
-        print("traj opt done, starting collision check")
+        ok, traj, us, cost = lift_and_do_traj_opt(self.ddp_bb, q_init, link_locs,threshold= 0.2,goal = self.goal_pose)
+        # ok, traj, us, cost = lift_and_do_traj_opt(self.ddp_bb, q_init, link_locs)
+        # print("traj opt done, starting collision check")
         ok_c = self._check_collision(traj)
-        print("collision check done")
+        # print("collision check done")
         return ok, ok_c, traj, us, cost
 
 
@@ -369,15 +439,32 @@ class SnakePlanner:
                 return True, traj,us,cost
         return False, None, None, None
 
+    # def _is_point_in_obstacle(self, p):
+    #     # Vectorized check could be faster, but keeping explicit loop for clarity
+    #     for obs in self.obstacles:
+    #         if (obs[0] <= p[0] <= obs[3] and 
+    #             obs[1] <= p[1] <= obs[4] and 
+    #             obs[2] <= p[2] <= obs[5]):
+    #             return True
+    #     return False
+
     def _is_point_in_obstacle(self, p):
-        # Vectorized check could be faster, but keeping explicit loop for clarity
+        # Small epsilon to catch points sitting exactly on the boundary
+        # and prevent "leaking" through corners due to float precision
+        epsilon = 1e-4
+        
         for obs in self.obstacles:
-            if (obs[0] <= p[0] <= obs[3] and 
-                obs[1] <= p[1] <= obs[4] and 
-                obs[2] <= p[2] <= obs[5]):
+            # Safely get min/max to ensure correct bounding box logic
+            # This fixes issues if any obstacle has defined bounds like [max, min]
+            x_min, x_max = min(obs[0], obs[3]), max(obs[0], obs[3])
+            y_min, y_max = min(obs[1], obs[4]), max(obs[1], obs[4])
+            z_min, z_max = min(obs[2], obs[5]), max(obs[2], obs[5])
+
+            if (x_min - epsilon <= p[0] <= x_max + epsilon and 
+                y_min - epsilon <= p[1] <= y_max + epsilon and 
+                z_min - epsilon <= p[2] <= z_max + epsilon):
                 return True
         return False
-
     def _generate_cost_field(self, start_point, bounds):
         """Generates a 3D grid cost map using Dijkstra from the goal."""
         def to_idx(pt):
@@ -599,7 +686,7 @@ class SnakePlanner:
             # Expand Neighbors
             neighbors = self._get_neighbors(current_node)
             a=1
-            print("current node:",current_node.data)
+            print("current node:",current_node.data,current_node.h)
             
             for neighbor in neighbors:
                 neighbor_sig = tuple(np.round(neighbor.data, 2))
@@ -685,7 +772,7 @@ if __name__ == "__main__":
     # ])
     # obstacles = actual_obs / 100.0  # Scale to meters
     # obstacles = None
-    tun1_center = np.array([0.3, -0.2, 0.2]) 
+    tun1_center = np.array([0.25, -0.2, 0.19]) 
     tun1_dir = np.array([0, 1, 0])
     obs_pin = None
     obs_pin = [[tun1_center,tun1_dir]]
@@ -694,7 +781,7 @@ if __name__ == "__main__":
     # 2. Define Goal and Init
     # goal = np.array([0.3, -0.3, 0.30])
     # pos = np.array([0.5, -0.3, 0.3]) 
-    pos = np.array([0.3, -0.2, 0.2]) 
+    pos = np.array([0.25, -0.32, 0.19]) 
     rot = np.array(([0,-1,0],[1,0,0],[0,0,1]))
     goal = pin.SE3(rot,pos)
     q_init = None # Will be auto-calculated if None, or pass np.zeros(16)

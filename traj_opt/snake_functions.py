@@ -59,7 +59,7 @@ def get_ee_problem(dt=0.05, T=8.0):
     ddp_ee.CreateProblem(dt=dt, weights=weights, T=T)
     return ddp_ee
 
-def get_curve_problem(dt=0.05, T=5.0):
+def get_curve_problem(dt=0.05, T=10.0):
     ddp_curve = SnakeReachingDDP(
             urdf_model_path=current_dir+"/REU_snake_v8.urdf",
             srdf_model_path=current_dir+"/REU_snake_v8.srdf",
@@ -95,7 +95,14 @@ def get_curve_problem(dt=0.05, T=5.0):
     "link_poses_reg": [np.hstack((
         np.array([1e3]*3),
         np.array([0]*3),
-        )),] * 16,
+        )),] * 15 + [np.hstack((
+        np.array([1e3]*3),
+        np.array([5]*3),
+        ))],
+    # "link_poses_reg": [np.hstack((
+    #     np.array([1e3]*3),
+    #     np.array([0]*3),
+    #     )),] * 16,
     "u_reg": np.array(0.1 * np.ones(nu)),
     "x_reg_terminal": 1e-2,
     "link_poses_reg_terminal": [1e-1] *16,
@@ -129,22 +136,30 @@ def get_curve_problem(dt=0.05, T=5.0):
     )
     return ddp_curve
 
-def lift_and_do_traj_opt(ddp,q_init,frame_locs,threshold=0.05):
+def lift_and_do_traj_opt(ddp,q_init,frame_locs,threshold=0.05,goal=None):
     q0 = q_init.copy()
     v0 = np.zeros(ddp.model.nv)
     x0 = np.concatenate([q0, v0])
 
     xf = [None] * 16
     for i in range(16):
-        xf[i] = pin.SE3(
-            np.eye(3),
-            np.array(frame_locs[i])
-        )
+        if i ==15 and goal is not None:
+            xf[i] = pin.SE3(
+                goal.rotation,
+                np.array(frame_locs[i])
+            )
+        else:
+            xf[i] = pin.SE3(
+                np.eye(3),
+                np.array(frame_locs[i])
+            )
     t = time.time()
     # print("Solving trajectory optimization...")
-    ok, xs, us, cost = ddp.Solve(x0, xf, maxiter=1000)
+    ok, xs, us, cost = ddp.Solve(x0, xf, maxiter=100)
     elapsed = time.time() - t
     # print("Solver converged:", ok , "Solver time:", elapsed, "s")
+    if elapsed > 5.0:
+        print("Warning: Solver took a long time to converge:", elapsed, "s")
     qs = xs[:, :ddp.nq]
     pin.forwardKinematics(ddp.model, ddp.data, qs[-1])
     pin.updateFramePlacements(ddp.model, ddp.data)
@@ -157,6 +172,8 @@ def lift_and_do_traj_opt(ddp,q_init,frame_locs,threshold=0.05):
     
     if total_error > threshold:
         ok = False
+    else:
+        ok = True
     
     return ok,xs,us,cost
 
