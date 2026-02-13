@@ -59,7 +59,7 @@ if exist('full_time_vector', 'var')
     dt = full_time_vector(2) - full_time_vector(1);
     fprintf('Detected time step from data: dt = %.4f s\n', dt);
 else
-    dt = 0.01; 
+    dt = 0.05; 
     fprintf('Using manual time step: dt = %.4f s\n', dt);
     num_steps = size(q_traj, 2);
     full_time_vector = 0:dt:(num_steps-1)*dt;

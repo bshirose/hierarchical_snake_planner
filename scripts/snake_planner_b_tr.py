@@ -99,8 +99,8 @@ class SnakePlanner:
 
         self.default_wall_thick = 0.04  # 2 cm thick walls
         self.default_gap_len = 0.3
-        self.default_gap_height = 0.12
-        self.default_gap_width = 0.12
+        self.default_gap_height = 0.08
+        self.default_gap_width = 0.08
         walls =[]
         if obs is not None:
             for ob in obs:
@@ -120,7 +120,9 @@ class SnakePlanner:
                                   height=self.default_gap_height,
                                   length=self.default_gap_len,
                                   wall_thick=self.default_wall_thick)
-        back = np.array([20, -45,  10, 50,  -35,  30])/100
+        back = np.array([10, -45,  10, 35,  -35,  30])/100 #back wall for gap = 0.07cm and tun1_center = np.array([0.20, -0.2, 0.19]) 
+        # back = np.array([15, -45,  10, 35,  -35,  30])/100 #back wall for gap = 0.09cm and tun1_center = np.array([0.25, -0.2, 0.19]) 
+        # back = np.array([20, -45,  10, 50,  -35,  30])/100 #back wall for gap = 12cm and tun1_center = np.array([0.25, -0.2, 0.19]) 
 
         self.obstacles = walls
         self.obstacles.append(back)
@@ -634,14 +636,14 @@ class SnakePlanner:
 
 if __name__ == "__main__":
 
-    tun1_center = np.array([0.25, -0.2, 0.19]) 
+    tun1_center = np.array([0.20, -0.2, 0.19]) 
     tun1_dir = np.array([0, 1, 0])
     obs_pin = None
     obs_pin = [[tun1_center,tun1_dir]]
     # obs_pin = None
     
     # 2. Define Goal and Init
-    pos = np.array([0.25, -0.32, 0.19]) 
+    pos = np.array([0.20, -0.32, 0.19]) 
     rot = np.array(([0,-1,0],[1,0,0],[0,0,1]))
     goal = pin.SE3(rot,pos)
     q_init = None 
