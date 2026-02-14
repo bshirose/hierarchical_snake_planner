@@ -7,7 +7,49 @@ import hppfcl
 from pinocchio.robot_wrapper import RobotWrapper
 from pinocchio.visualize import MeshcatVisualizer
 
+class CollisionStopException(Exception):
+    """Custom exception to halt the solver upon collision."""
+    pass
 
+class CollisionStopCallback(crocoddyl.CallbackAbstract):
+    def __init__(self, snake_ddp_instance, safe_store):
+        crocoddyl.CallbackAbstract.__init__(self)
+        self.snake = snake_ddp_instance
+        self.store = safe_store  # Mutable dictionary to cache safe trajectories
+
+    def __call__(self, solver):
+        # 1. Check for collisions in the current solver candidate
+        collision_detected = False
+        
+        # We iterate through the trajectory. 
+        # (Optimization: You could skip frames or check only specific links if slow)
+        for x in solver.xs:
+            q = x[:self.snake.nq]
+            
+            # Update geometry
+            pin.updateGeometryPlacements(
+                self.snake.model, 
+                self.snake.data,
+                self.snake.collision_model, 
+                self.snake.collision_data, 
+                q
+            )
+            
+            # Check collision (stops at first contact for speed)
+            if pin.computeCollisions(self.snake.collision_model, self.snake.collision_data, True):
+                collision_detected = True
+                break
+
+        # 2. Logic: Save if safe, Stop if colliding
+        if collision_detected:
+            # Do NOT update the store. Raise exception to stop solver.
+            raise CollisionStopException("Optimization halted: Trajectory hit an obstacle.")
+        else:
+            # Trajectory is safe. Cache it as the new "best safe".
+            # We must copy the data to avoid reference issues as solver updates.
+            self.store['xs'] = [x.copy() for x in solver.xs]
+            self.store['us'] = [u.copy() for u in solver.us]
+            self.store['cost'] = solver.cost
 class SnakeReachingDDP():
     """
     Crocoddyl problem factory for 
@@ -382,23 +424,45 @@ class SnakeReachingDDP():
 
 
     def collisionCheck(self, q):
-        
-        pin.computeCollisions(self.model,self.data,self.collision_model,self.collision_data,q,False)
+        # 1. Update geometry placements for the new configuration q
+        pin.updateGeometryPlacements(
+            self.model, 
+            self.data,
+            self.collision_model, 
+            self.collision_data, 
+            q
+        )
+
+        # 2. Compute all collisions (do not stop at first, so we can filter)
+        pin.computeCollisions(
+            self.collision_model, 
+            self.collision_data, 
+            False
+        )
 
         collision_results = []
+        
+        # 3. Define the specific pairs to ignore
+        # Using a set of sets for order-independent checking
+        ignored_pairs = [
+            {'reu_module_out_0_0', 'reu_module_body_1_0'}
+        ]
     
-        # Print the status of collision for all collision pairs
+        # 4. Filter results
         for k in range(len(self.collision_model.collisionPairs)):
             cr = self.collision_data.collisionResults[k]
             cp = self.collision_model.collisionPairs[k]
             
             if cr.isCollision():
-                collision_info = (
-                    self.collision_model.geometryObjects[cp.first].name,
-                    self.collision_model.geometryObjects[cp.second].name
-                    )
+                name1 = self.collision_model.geometryObjects[cp.first].name
+                name2 = self.collision_model.geometryObjects[cp.second].name
                 
-                collision_results.append(collision_info)
+                # Check if this pair is in our ignore list
+                current_pair = {name1, name2}
+                
+                if current_pair not in ignored_pairs:
+                    collision_info = (name1, name2)
+                    collision_results.append(collision_info)
             
         n_collisions = len(collision_results)
         
@@ -425,3 +489,54 @@ class SnakeReachingDDP():
 
     def ShowSnakeConfiguration(self, q):
         self.robot.display(q)
+
+    def RefineTrajectory(self, xs_init, us_init=None, maxiter=50):
+        """
+        Refines a trajectory. Stores the last valid (collision-free) iteration.
+        If a collision is found, stops and returns the LAST SAFE trajectory.
+        """
+        # 1. Prepare Initial State
+        if us_init is None:
+            us_init = list(self.problem.quasiStatic(list(xs_init[:-1])))
+        
+        # 2. Check if the SEED itself is colliding
+        # If the start is bad, we can't optimize "until" collision.
+        # We reuse the logic from the callback manually for the seed.
+        is_seed_colliding = False
+        for x in xs_init:
+            q = x[:self.nq]
+            pin.updateGeometryPlacements(self.model, self.data, self.collision_model, self.collision_data, q)
+            if pin.computeCollisions(self.collision_model, self.collision_data, True):
+                is_seed_colliding = True
+                break
+        
+        if is_seed_colliding:
+            print("Warning: Initial seed trajectory already in collision. Returning seed.")
+            return False, np.array(xs_init), np.array(us_init), float('inf')
+
+        # 3. Setup Safe Storage
+        # Initialize with the seed (which we now know is safe)
+        safe_store = {
+            'xs': [x.copy() for x in xs_init],
+            'us': [u.copy() for u in us_init],
+            'cost': self.problem.calc(list(xs_init), list(us_init)) # Initial cost
+        }
+
+        # 4. Setup Callback
+        stop_callback = CollisionStopCallback(self, safe_store)
+        self.solver.setCallbacks([stop_callback])
+        
+        self.problem.x0 = xs_init[0]
+        
+        # 5. Solve
+        converged = False
+        try:
+            self.solver.solve(list(xs_init), list(us_init), maxiter)
+            converged = True # Finished maxiter without collision
+            # If we finished safely, the callback updated safe_store with the final result
+        except CollisionStopException:
+            print("Collision detected during optimization. Reverting to last safe trajectory.")
+            converged = False
+        
+        # 6. Return the CACHED safe trajectory, not the solver's current (colliding) state
+        return converged, np.array(safe_store['xs']), np.array(safe_store['us']), safe_store['cost']

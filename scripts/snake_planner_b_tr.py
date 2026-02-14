@@ -92,8 +92,8 @@ class SnakePlanner:
         # Internal Counter
         self._node_counter = 0
 
-        self.first_locs = np.load("first_four_locs_shifted.npy")
-        self.first_locs = self.first_locs[:3,:]
+        self.first_locs = np.load("first_four_locs_true.npy")
+        # self.first_locs = self.first_locs[:3,:]
     
 
 
@@ -487,6 +487,8 @@ class SnakePlanner:
     def _check_single_state(self, x):
         q = x[:self.ddp.nq]
         _, n_collisions = self.ddp.collisionCheck(q)
+        if n_collisions > 0:
+            a=1
         return n_collisions == 0
     
 
@@ -575,7 +577,7 @@ class SnakePlanner:
             # Check Goal
             dist_to_goal = self._calculate_ee_diff(current_node)
             if dist_to_goal < self.goal_proximity:
-                print("Path found!")
+                print("Path found!", f"Distance to goal: {dist_to_goal:.3f}")
                 pbar.close()
                 return current_node.H_traj
 

@@ -65,6 +65,7 @@ def get_curve_problem(dt=0.05, T=10.0):
             srdf_model_path=current_dir+"/REU_snake_v8.srdf",
             package_dirs=current_dir+"/",
             link_frame_names=[
+                "reu_module_out_0",
                 "reu_module_out_1",
                 "reu_module_out_2",
                 "reu_module_out_3",
@@ -89,44 +90,27 @@ def get_curve_problem(dt=0.05, T=10.0):
 
     weights = {
     "x_reg": np.array(1.0 * np.ones(nq + nv)),
-    # "link_poses_reg": [np.array(1.0 * np.ones(6))] * 16,
     "link_poses_reg": [np.hstack((
         np.array([1e1]*3),
         np.array([0]*3),
-        )),] * 15 + [np.hstack((
+        )),] * 16 + [np.hstack((
         np.array([1e1]*3),
         np.array([0.5]*3),
         ))],
-    # "link_poses_reg": [np.hstack((
-    #     np.array([1e3]*3),
-    #     np.array([0]*3),
-    #     )),] * 16,
     "u_reg": np.array(0.1 * np.ones(nu)),
     "x_reg_terminal": 1e-2,
-    "link_poses_reg_terminal": [1e-1] *16,
+    "link_poses_reg_terminal": [1e-1] *17,
     "u_reg_terminal": 1e-2,
     }
 
-    # weights = {
-    #     "x_reg": np.array(0.01 * np.ones(nq + nv)),
-    #     "link_poses_reg": [np.hstack((
-    #         np.array([1e3]*3),
-    #         np.array([0]*3),
-    #         )),] * 16,
-    #     "u_reg": np.array(0.1 * np.ones(nu)),
-    #     "x_reg_terminal": 1e-2,
-    #     "link_poses_reg_terminal": [1e-1] *16,
-    #     "u_reg_terminal": 1e-2,
-    # }
-
     x_lb = -np.inf * np.ones(ddp_curve.state.nx)
     x_ub =  np.inf * np.ones(ddp_curve.state.nx)
-    x_lb[:4] = 0.0
-    x_ub[:4] = 0.0
+    x_lb[:5] = 0.0
+    x_ub[:5] = 0.0
     u_lb = -4 * np.ones(ddp_curve.nu)
     u_ub =  4 * np.ones(ddp_curve.nu)
-    u_lb[:4] = -400 * np.ones(4)
-    u_ub[:4] = 400 * np.ones(4)
+    u_lb[:5] = -400 * np.ones(5)
+    u_ub[:5] = 400 * np.ones(5)
     # ddp_curve.CreateProblem(dt=dt, weights=weights, T=T)
     ddp_curve.CreateProblem(
         dt=dt, 
@@ -144,9 +128,9 @@ def lift_and_do_traj_opt(ddp,q_init,frame_locs,threshold=0.1,goal=None):
     v0 = np.zeros(ddp.model.nv)
     x0 = np.concatenate([q0, v0])
 
-    xf = [None] * 16
-    for i in range(16):
-        if i ==15 and goal is not None:
+    xf = [None] * 17
+    for i in range(17):
+        if i ==16 and goal is not None:
             xf[i] = pin.SE3(
                 goal.rotation,
                 np.array(frame_locs[i])
@@ -167,11 +151,9 @@ def lift_and_do_traj_opt(ddp,q_init,frame_locs,threshold=0.1,goal=None):
     pin.forwardKinematics(ddp.model, ddp.data, qs[-1])
     pin.updateFramePlacements(ddp.model, ddp.data)
     total_error = 0.0
-    for i in range(16):
+    for i in range(17):
         xf_a = ddp.robot.data.oMf[ddp.link_frame_ids[i]]
         total_error = np.max([total_error, np.linalg.norm(xf_a.translation - xf[i].translation)])
-        # if np.linalg.norm(xf_a.translation - xf[i].translation) > 1e-3:
-        #     total_error += np.linalg.norm(xf_a.translation - xf[i].translation)
     
     if total_error > threshold:
         ok = False
@@ -396,3 +378,25 @@ def get_tunnel_wall_aabbs(center_pos, orientation_axis, width, height, length, w
     )
     walls_unsorted = [walls['right'], walls['left'], walls['top'], walls['bottom']]
     return walls, walls_unsorted
+
+
+def optimize_trajectory_until_collision(ddp_problem, xs_seed, us_seed=None, maxiter=50):
+    """
+    Optimizes a trajectory using DDP.
+    Stops if the optimization pushes the snake into an obstacle.
+    Returns the trajectory from the iteration *immediately before* the collision occurred.
+    """
+    
+    # Validation
+    if len(xs_seed) != ddp_problem.problem.T + 1:
+        print(f"Traj length mismatch. Seed: {len(xs_seed)}, Problem: {ddp_problem.problem.T + 1}")
+        return False, xs_seed, us_seed, 0.0
+
+    # Run the refinement with rollback capability
+    ok, xs, us, cost = ddp_problem.RefineTrajectory(
+        xs_init=xs_seed, 
+        us_init=us_seed, 
+        maxiter=maxiter
+    )
+    
+    return ok, xs, us, cost
