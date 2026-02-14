@@ -5,6 +5,8 @@ import hppfcl
 # import mim_solvers
 
 from pinocchio.robot_wrapper import RobotWrapper
+from pinocchio.visualize import MeshcatVisualizer
+
 
 class SnakeReachingDDP():
     """
@@ -415,3 +417,11 @@ class SnakeReachingDDP():
             d = self.collision_data.distanceResults[k].min_distance
             distances[k] = d
         return distances
+    
+    def InitDisplay(self):
+        self.robot.setVisualizer(MeshcatVisualizer())
+        self.robot.initViewer(open=True)
+        self.robot.loadViewerModel()
+
+    def ShowSnakeConfiguration(self, q):
+        self.robot.display(q)
