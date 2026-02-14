@@ -61,7 +61,7 @@ class SnakePlanner:
         # Search Parameters
         self.delta_t = 0.03
         self.delta_tl = 0.1
-        self.delta_cl = 0.4
+        self.delta_cl = 0.25
         self.interp_steps = 10
         self.cost_grid_size = cost_grid_size
         self.dt = 0.1  # Time step for dynamics check
@@ -69,128 +69,7 @@ class SnakePlanner:
         # Internal Counter
         self._node_counter = 0
 
-    def plan(self, q_init, goal_pos, obstacles, max_iter=15000):
-        """
-        Main planning method.
-        
-        Args:
-            q_init (np.array): Initial joint angles.
-            goal_pos (np.array): Target [x, y, z] for the end effector.
-            obstacles (list): List of [xmin, ymin, zmin, xmax, ymax, zmax].
-            max_iter (int): Maximum iterations for the search.
-            
-        Returns:
-            np.array: The trajectory of joint angles (H_traj) if found, else None.
-        """
-        self._node_counter = 0
-        self.goal_pos = np.array(goal_pos)
-        self.obstacles = np.array(obstacles) if obstacles is not None else np.array([])
-
-        # 1. Generate Heuristic Cost Field (Dijkstra/BFS on grid)
-        print("Generating cost field...")
-        bounds_tuple = ((-self.bounds_limit, self.bounds_limit), 
-                        (-self.bounds_limit, self.bounds_limit), 
-                        (-self.bounds_limit, self.bounds_limit))
-        self.cost_map = self._generate_cost_field(self.goal_pos, bounds_tuple)
-        print("Cost field generated.")
-
-        # 2. Initialize Root Node
-        # Heuristic initialization for latent state based on FK of q_init could be better,
-        # but preserving original logic: init based on straight line extension
-        initial_latent = np.array([
-            self.link_length * self.num_links / 2, 0, 0, 
-            self.link_length * self.num_links, 0, 0
-        ])
-        
-        root = self.Node(initial_latent, self._get_id())
-        root.H = q_init if q_init is not None else self._lift_to_high(root)
-        
-        # Recalculate latent end-point to match actual FK of q_init if provided
-        _, ee_tm = self._forward_kinematics(root.H)
-        root.data[3:6] = ee_tm[0:3, 3]
-        
-        root.H_traj = np.array([root.H])
-        root.h = self._calculate_h(root)
-        
-        open_list = [root]
-        closed_set = set()
-        
-        global_best_dist = float('inf')
-        best_node = root
-
-        # 3. Search Loop
-        pbar = tqdm.tqdm(total=max_iter, desc="Planning")
-        
-        for _ in range(max_iter):
-            if not open_list:
-                print("Open list empty. No path found.")
-                break
-
-            # Sort by heuristic (Greedy Best First)
-            open_list.sort(key=lambda x: x.h)
-            current_node = open_list.pop(0)
-            
-            # State signature for visited set (tuple of latent variables)
-            state_signature = tuple(np.round(current_node.data, 2))
-            closed_set.add(state_signature)
-
-            # Check Goal
-            dist_to_goal = self._calculate_ee_diff(current_node)
-            if dist_to_goal < self.goal_proximity:
-                print("Path found!")
-                pbar.close()
-                return current_node.H_traj
-
-            # Track Best
-            if dist_to_goal < global_best_dist:
-                global_best_dist = dist_to_goal
-                best_node = current_node
-                pbar.set_postfix({"Best Dist": f"{global_best_dist:.3f}"})
-
-            # Expand Neighbors
-            neighbors = self._get_neighbors(current_node)
-            a=1
-
-            
-            for neighbor in neighbors:
-                neighbor_sig = tuple(np.round(neighbor.data, 2))
-                if neighbor_sig in closed_set:
-                    continue
-
-                # Inverse Kinematics (Latent -> Joint Space)
-                neighbor.H = self._lift_to_high(neighbor)
-                
-                # Check Static Collision (Pose)
-                if not self._is_collision_free(neighbor.H):
-                    continue
-
-                # Check Dynamic Feasibility (Trajectory)
-                ok, traj = self._solve_trajectory(root.H, neighbor.H)
-                
-                if ok:
-                    neighbor.g = root.g + 1
-                    neighbor.H_traj = np.append(root.H_traj, traj, axis=0)
-                    if neighbor not in open_list:
-                        open_list.append(neighbor)
-                else:
-                    # Repair strategy: try connecting to parent's parent
-                    repaired_ok = self._repair(neighbor)
-                    if repaired_ok and neighbor not in open_list:
-                        open_list.append(neighbor)
-                    else:
-                        continue
-
-                # Update Heuristic based on actual IK result
-                _, ee_tm = self._forward_kinematics(neighbor.H)
-                neighbor.data[3:6] = np.round(ee_tm[0:3, 3], 2)
-                neighbor.h = self._calculate_h(neighbor)
-
-            pbar.update(1)
-
-        pbar.close()
-        print(f"Max iterations reached. Best distance: {global_best_dist}")
-        return best_node.H_traj
-
+    
     # =========================================================================
     #    Helper Methods (Dynamics, Kinematics, Collision, Heuristics)
     # =========================================================================
@@ -206,6 +85,7 @@ class SnakePlanner:
         # Perturbations defined in original code
         moves = [
             (range(3, 6), self.delta_tl), # Perturb End Point
+            (range(3, 6), self.delta_t),  # Fine Perturb End Point
             (range(3), self.delta_cl)     # Perturb Control Point
         ]
 
@@ -228,16 +108,103 @@ class SnakePlanner:
                     new_node.parent = node
                     neighbors.append(new_node)
         return neighbors
+    
+    
+    # def _fit_bezier_to_joints(self, q):
+    #     """
+    #     Calculates the best-fit Bezier control point for the current physical snake.
+    #     Solves Least Squares: Minimize || P_snake(i) - P_bezier(s_i) ||^2
+    #     """
+    #     # 1. Get actual link positions (Physical State)
+    #     P_world, _ = self._forward_kinematics(q)
+    #     P_world = P_world.T  # Shape (N+1, 3)
+        
+    #     # 2. Setup Bezier Endpoints
+    #     p0 = P_world[0]      # Base
+    #     p2 = P_world[-1]     # End Effector
+        
+    #     # 3. Solve for P1 (Control Point)
+    #     # Equation: P(s) = (1-s)^2*p0 + 2s(1-s)*p1 + s^2*p2
+    #     # Rearrange: 2s(1-s)*p1 = P_actual - (1-s)^2*p0 - s^2*p2
+    #     # Linear System: A * p1 = B
+        
+    #     A_list = []
+    #     B_list = []
+        
+    #     for i in range(self.num_links + 1):
+    #         s = i / self.num_links
+            
+    #         # Weight for P1
+    #         coeff = 2 * s * (1 - s) 
+            
+    #         # Residual vector (what P1 needs to explain)
+    #         residual = P_world[i] - ((1-s)**2 * p0) - (s**2 * p2)
+            
+    #         if coeff > 1e-6: # Avoid division by zero at endpoints
+    #             A_list.append(coeff)
+    #             B_list.append(residual)
 
+    #     # Stack into matrices
+    #     A = np.array(A_list).reshape(-1, 1) # Shape (N, 1)
+    #     B = np.array(B_list)                # Shape (N, 3)
+        
+    #     # Least Squares Solution: p1 = (A.T @ A)^-1 @ A.T @ B
+    #     # Since A is a scalar vector per dimension, this simplifies nicely
+    #     ATA = A.T @ A
+    #     ATB = A.T @ B
+    #     p1 = ATB / ATA 
+        
+    #     return p1.flatten(), p2
+    
+    # def _get_neighbors(self, node):
+    #     neighbors = []
+        
+    #     # --- FIX: RE-GROUNDING ---
+    #     # Instead of trusting the cached 'node.data', we ask: 
+    #     # "Where is the snake actually right now?"
+    #     # This ensures our perturbations start from a physically feasible state.
+    #     fitted_control, fitted_end = self._fit_bezier_to_joints(node.H)
+        
+    #     # Construct the "grounded" latent state
+    #     grounded_data = np.concatenate([fitted_control, fitted_end])
+        
+    #     # Perturbation Constants
+    #     moves = [
+    #         (range(3, 6), self.delta_tl), # Perturb End Point (Indices 3,4,5)
+    #         (range(3), self.delta_cl)     # Perturb Control Point (Indices 0,1,2)
+    #     ]
+
+    #     for indices, delta in moves:
+    #         for dx in [-delta, delta]:
+    #             for ind in indices:
+    #                 # Perturb the GROUNDED data, not the old node.data
+    #                 new_data = copy(grounded_data)
+    #                 new_data[ind] += dx
+    #                 new_data = np.round(new_data, decimals=2)
+                    
+    #                 # Check arc length (prevents over-stretching)
+    #                 if self._check_arc_length(new_data[3:6], new_data[:3]):
+    #                     continue
+                        
+    #                 # Check workspace bounds
+    #                 if not self._check_bounds(new_data):
+    #                     continue
+                        
+    #                 new_node = self.Node(new_data, self._get_id())
+    #                 new_node.parent = node
+    #                 neighbors.append(new_node)
+    #     return neighbors
+    
     def _lift_to_high(self, node):
         """
         Maps latent Bezier parameters to joint angles via IK.
-        Bezier points: Base -> Control(data[:3]) -> End(data[3:])
+        Now includes Warm Starting and Feasibility Checks.
         """
         link_locs = []
         control = node.data[:3]
         end = node.data[3:]
         
+        # Generate target points from Bezier curve
         for i in range(self.num_links + 1):
             s = i / self.num_links
             # Quadratic Bezier
@@ -245,25 +212,44 @@ class SnakePlanner:
             link_locs.append(loc)
             
         link_locs = np.array(link_locs).T
-        # Use previous H as warm start if available
-        initial_guess = None
-        # initial_guess = node.parent.H if node.parent else None
-        angles = self._solve_ik(link_locs, initial_guess)
+
+        initial_guess = node.parent.H if node.parent is not None else None
+        
+        # Solve IK
+        angles, success = self._solve_ik(link_locs, initial_guess)
+        
+        if not success:
+            return None
+            
         return angles
 
     def _solve_ik(self, target_pts, initial_q=None):
-        """Optimizes joint angles to match target points."""
+        """
+        Optimizes joint angles to match target points.
+        Includes Regularization to prevent joint flipping.
+        """
         if initial_q is not None:
             q_guess = initial_q
+            # Weight for keeping joints close to previous state
+            lambda_reg = 0.05 
         else:
             q_guess = np.zeros(self.num_links)
+            lambda_reg = 0.0  # No history to regularize against
             
         bounds = [(-np.pi/2, np.pi/2) for _ in range(self.num_links)]
         
         def objective(q):
+            # 1. Primary Objective: Match the Bezier Curve positions
             P_world, _ = self._forward_kinematics(q)
             diff = P_world - target_pts
-            return np.sum(diff**2)
+            fit_error = np.sum(diff**2)
+            
+            # 2. Regularization Term: Minimize joint movement from parent
+            reg_term = 0.0
+            if lambda_reg > 0:
+                reg_term = lambda_reg * np.sum((q - q_guess)**2)
+                
+            return fit_error + reg_term
 
         result = minimize(
             objective, 
@@ -272,8 +258,15 @@ class SnakePlanner:
             bounds=bounds,
             options={'ftol': 1e-4, 'disp': False}
         )
-        return result.x
-
+        
+        # --- FEASIBILITY THRESHOLD ---
+        # Check if the robot actually matched the curve.
+        P_final, _ = self._forward_kinematics(result.x)
+        final_error = np.sum((P_final - target_pts)**2)
+        
+        is_feasible = final_error < 0.05  # Adjustable threshold
+        
+        return result.x, is_feasible
     def _forward_kinematics(self, q):
         """Computes positions of all joints and EE transform."""
         q = np.atleast_1d(q)
@@ -540,6 +533,134 @@ class SnakePlanner:
     @staticmethod
     def _Tx(d):
         return np.array([[1, 0, 0, d], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]])
+    
+    
+    def plan(self, q_init, goal_pos, obstacles, max_iter=15000):
+        """
+        Main planning method.
+        
+        Args:
+            q_init (np.array): Initial joint angles.
+            goal_pos (np.array): Target [x, y, z] for the end effector.
+            obstacles (list): List of [xmin, ymin, zmin, xmax, ymax, zmax].
+            max_iter (int): Maximum iterations for the search.
+            
+        Returns:
+            np.array: The trajectory of joint angles (H_traj) if found, else None.
+        """
+        self._node_counter = 0
+        self.goal_pos = np.array(goal_pos)
+        self.obstacles = np.array(obstacles) if obstacles is not None else np.array([])
+
+        # 1. Generate Heuristic Cost Field (Dijkstra/BFS on grid)
+        print("Generating cost field...")
+        bounds_tuple = ((-self.bounds_limit, self.bounds_limit), 
+                        (-self.bounds_limit, self.bounds_limit), 
+                        (-self.bounds_limit, self.bounds_limit))
+        self.cost_map = self._generate_cost_field(self.goal_pos, bounds_tuple)
+        print("Cost field generated.")
+
+        # 2. Initialize Root Node
+        # Heuristic initialization for latent state based on FK of q_init could be better,
+        # but preserving original logic: init based on straight line extension
+        initial_latent = np.array([
+            self.link_length * self.num_links / 2, 0, 0, 
+            self.link_length * self.num_links, 0, 0
+        ])
+        
+        root = self.Node(initial_latent, self._get_id())
+        root.H = q_init if q_init is not None else self._lift_to_high(root)
+        
+        # Recalculate latent end-point to match actual FK of q_init if provided
+        _, ee_tm = self._forward_kinematics(root.H)
+        root.data[3:6] = ee_tm[0:3, 3]
+        
+        root.H_traj = np.array([root.H])
+        root.h = self._calculate_h(root)
+        
+        open_list = [root]
+        closed_set = set()
+        
+        global_best_dist = float('inf')
+        best_node = root
+
+        # 3. Search Loop
+        pbar = tqdm.tqdm(total=max_iter, desc="Planning")
+        
+        for _ in range(max_iter):
+            if not open_list:
+                print("Open list empty. No path found.")
+                break
+
+            # Sort by heuristic (Greedy Best First)
+            open_list.sort(key=lambda x: x.h)
+            current_node = open_list.pop(0)
+            
+            # State signature for visited set (tuple of latent variables)
+            state_signature = tuple(np.round(current_node.data, 2))
+            if state_signature in closed_set:
+                continue
+            closed_set.add(state_signature)
+
+            # Check Goal
+            dist_to_goal = self._calculate_ee_diff(current_node)
+            if dist_to_goal < self.goal_proximity:
+                print("Path found!")
+                pbar.close()
+                return current_node.H_traj
+
+            # Track Best
+            if dist_to_goal < global_best_dist:
+                global_best_dist = dist_to_goal
+                best_node = current_node
+                pbar.set_postfix({"Best Dist": f"{global_best_dist:.3f}"})
+
+            # Expand Neighbors
+            neighbors = self._get_neighbors(current_node)
+            a=1
+
+            
+            for neighbor in neighbors:
+                neighbor_sig = tuple(np.round(neighbor.data, 2))
+                if neighbor_sig in closed_set:
+                    continue
+
+                # Inverse Kinematics (Latent -> Joint Space)
+                neighbor.H = self._lift_to_high(neighbor)
+                if neighbor.H is None:
+                    continue
+                # Check Static Collision (Pose)
+                if not self._is_collision_free(neighbor.H):
+                    continue
+                
+                # Check Dynamic Feasibility (Trajectory)
+                ok, traj = self._solve_trajectory(root.H, neighbor.H)
+                
+                if ok:
+                    neighbor.g = root.g + 1
+                    neighbor.H_traj = np.append(root.H_traj, traj, axis=0)
+                    if neighbor not in open_list:
+                        open_list.append(neighbor)
+                else:
+                    # Repair strategy: try connecting to parent's parent
+                    repaired_ok = self._repair(neighbor)
+                    if repaired_ok and neighbor not in open_list:
+                        open_list.append(neighbor)
+                    else:
+                        continue
+
+                # Update Heuristic based on actual IK result
+                _, ee_tm = self._forward_kinematics(neighbor.H)
+                neighbor.data[3:6] = np.round(ee_tm[0:3, 3], 2)
+                neighbor.h = self._calculate_h(neighbor)
+                dist_to_goal = self._calculate_ee_diff(neighbor)
+                # print(neighbor.data, np.round(neighbor.h,2), np.round(dist_to_goal,2))
+
+            pbar.update(1)
+
+        pbar.close()
+        print(f"Max iterations reached. Best distance: {global_best_dist}")
+        return best_node.H_traj
 
 # =============================================================================
 # Usage Example
@@ -553,11 +674,12 @@ if __name__ == "__main__":
         [36 - snake_thickness, -35, 27, 36 + snake_thickness, -10, 37],
         [24.5, -35, 16, 35.5, -10, 27],
         [24.5, -35, 37, 35.5, -10, 38],
+        [20, -38, 20, 40, -35, 45]
     ])
     obstacles = actual_obs / 100.0  # Scale to meters
     
     # 2. Define Goal and Init
-    goal = np.array([0.3, -0.2, 0.30])
+    goal = np.array([0.3, -0.3, 0.30])
     q_init = None # Will be auto-calculated if None, or pass np.zeros(16)
     
     # 3. Run Planner

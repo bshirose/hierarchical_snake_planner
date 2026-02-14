@@ -3,16 +3,17 @@ clear; close all;
 rng('default');
 
 n_links = 16; % The robot has 16 joints and 16 links.
-link_length = 5.105; % module length (cm)
+link_length = 5.06; % module length (cm)
 
 
 waypoints = { 
-        [30,-20,30]',
+        [30,-20,20]',
 
     };
 T_base_initial = eye(4);
-
+T_base_initial(1,4) = -4*link_length;
 load('my_data_2.mat')
+my_matrix = my_matrix(:,1:15);
 q_initial=my_matrix(end,:);
 % 'T_base_initial' is the starting pose of the HEAD at t=0.
 
@@ -21,11 +22,12 @@ safety_margin = 0.01;
 snake_thickness = 3;
 enable_collision_avoidance = true;
 actual_obs=[
-            22-snake_thickness -35 27 22+snake_thickness -10 37;
-            36-snake_thickness -35 27 36+snake_thickness -10 37;
-            24.5 -35 26 35.5 -10 27; 
-            24.5 -35 37 35.5 -10 38; 
-            ];
+       37.5, -32.5,   8.5,  41.5,  -7.5,  31.5;
+        18.5, -32.5,   8.5,  22.5,  -7.5,  31.5;
+       22.5, -32.5,  27.5,  37.5,  -7.5,  31.5;
+      22.5, -32.5,   8.5,  37.5,  -7.5,  12.5;
+      20.5, -32.5,  10.5, 39.5,  -36,  29.5
+      ]
 
 
 
@@ -58,7 +60,7 @@ for yy=1:length(waypoints),max_range=max([max_range,abs(waypoints{yy}(:))']);end
 lim = ceil(max_range*1.1); if lim==0, lim=5; end; axis(ax_preview,[-lim lim -lim lim -lim lim]); view(ax_preview, 3);
 xlabel(ax_preview,'X');ylabel(ax_preview,'Y');zlabel(ax_preview,'Z');title(ax_preview,'Initial Setup. Press any key to start.'); legend(ax_preview,'show','Location','northwest');
 drawnow; disp('Sanity Check: Press any key to start optimization...'); 
-pause;
+% pause;
 close(fig_preview); fprintf('Preview confirmed. Starting optimization...\n');
 tic;
 
@@ -201,7 +203,7 @@ function [P_world, T_ee_world] = forwardKinematics(q, link_length, T_base, base_
 end
 % --- Helper: Cuboid Violations (Identical to v10.3) ---
 
-switch upper(p), case 'X',fs=[f_Ym;f_YM;f_Zm;f_ZM];case 'Y',fs=[f_Xm;f_XM;f_Zm;f_ZM];case 'Z',fs=[f_Xm;f_XM;f_Ym;f_YM];otherwise,fs=[f_Ym;f_YM;f_Zm;f_ZM];end; patch(ax,'Vertices',v,'Faces',fs,'FaceColor','b','FaceAlpha',0.1,'EdgeColor','b','LineStyle','--'); 
+% switch upper(p), case 'X',fs=[f_Ym;f_YM;f_Zm;f_ZM];case 'Y',fs=[f_Xm;f_XM;f_Zm;f_ZM];case 'Z',fs=[f_Xm;f_XM;f_Ym;f_YM];otherwise,fs=[f_Ym;f_YM;f_Zm;f_ZM];end; patch(ax,'Vertices',v,'Faces',fs,'FaceColor','b','FaceAlpha',0.1,'EdgeColor','b','LineStyle','--'); 
 % --- Helper: Homogeneous Transforms (Identical to v10.3) ---
 function T=Rz(t),c=cos(t);s=sin(t);T=[c -s 0 0;s c 0 0;0 0 1 0;0 0 0 1];end 
 function T=Ry(t),c=cos(t);s=sin(t);T=[c 0 s 0;0 1 0 0;-s 0 c 0;0 0 0 1];end

@@ -21,6 +21,9 @@ load(data_filename);
 figure('Name', 'Optimal Trajectories (Full Path)', 'NumberTitle', 'off');
 q_legend = arrayfun(@(d) sprintf('q%d', d), 1:n_links, 'UniformOutput', false);
 
+record_video = false;
+obstacle_cuboid=[];
+
 animateRobot(full_q_opt, link_length, full_time_vector, waypoints, record_video, obstacle_cuboid, segment_end_times, full_T_base_trajectory, full_base_end_trajectory,actual_obs);
 
 % =========================================================================
@@ -74,7 +77,7 @@ function animateRobot(q_trajectory, link_length, time_vector, waypoints, record_
         total_time = time_vector(end);
         
         % --- Main Animation Loop (Updated for Locomotion) ---
-        for t = 0:(1/60):total_time % Play at 60fps
+        for t = 0:(1/20):total_time % Play at 60fps
             % --- Find the current segment ---
             % 'segment_end_times' is [0, T1, T2, T3]
             % 'find' returns the *first* index where t is <= the end time.
@@ -183,7 +186,7 @@ function P_all = getAllPoints(q_traj, link_length, T_base_traj, base_end_traj, s
 end
 
 % --- Helper: Plot Cuboid ---
-switch upper(p),case 'X',fs=[f_Ym;f_YM;f_Zm;f_ZM];case 'Y',fs=[f_Xm;f_XM;f_Zm;f_ZM];case 'Z',fs=[f_Xm;f_XM;f_Ym;f_YM];otherwise,fs=[f_Ym;f_YM;f_Zm;f_ZM];end;patch(ax,'Vertices',v,'Faces',fs,'FaceColor','b','FaceAlpha',0.1,'EdgeColor','b','LineStyle','--','DisplayName',dN);end
+% switch upper(p),case 'X',fs=[f_Ym;f_YM;f_Zm;f_ZM];case 'Y',fs=[f_Xm;f_XM;f_Zm;f_ZM];case 'Z',fs=[f_Xm;f_XM;f_Ym;f_YM];otherwise,fs=[f_Ym;f_YM;f_Zm;f_ZM];end;patch(ax,'Vertices',v,'Faces',fs,'FaceColor','b','FaceAlpha',0.1,'EdgeColor','b','LineStyle','--','DisplayName',dN);end
 
 % --- Helper: Generalized Forward Kinematics (v13+) ---
 % (Identical to generate script)
