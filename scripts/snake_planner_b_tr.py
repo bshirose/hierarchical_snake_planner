@@ -84,7 +84,7 @@ class SnakePlanner:
         self.delta_ts = 0.01
         self.delta_tl = 0.1
         self.delta_cl = 0.15
-        self.delta_cs = 0.05
+        self.delta_cs = 0.02
         self.interp_steps = 10
         self.cost_grid_size = cost_grid_size
         self.dt = 0.1  # Time step for dynamics check
@@ -99,8 +99,8 @@ class SnakePlanner:
 
         self.default_wall_thick = 0.04  # 2 cm thick walls
         self.default_gap_len = 0.3
-        self.default_gap_height = 0.08
-        self.default_gap_width = 0.08
+        self.default_gap_height = 0.07
+        self.default_gap_width = 0.07
         walls =[]
         if obs is not None:
             for ob in obs:
@@ -199,37 +199,6 @@ class SnakePlanner:
                 
         return neighbors
 
-    # def _get_neighbors(self, node):
-    #     """Generates neighbors by perturbing control points and end points."""
-    #     neighbors = []
-        
-    #     # Perturbations defined in original code
-    #     moves = [
-    #         (range(3, 6), self.delta_tl), # Perturb End Point
-    #         (range(3, 6), self.delta_t),  # Fine Perturb End Point
-    #         (range(3), self.delta_cl)     # Perturb Control Point
-    #     ]
-
-    #     for indices, delta in moves:
-    #         for dx in [-delta, delta]:
-    #             for ind in indices:
-    #                 new_data = copy(node.data)
-    #                 new_data[ind] += dx
-    #                 new_data = np.round(new_data, decimals=2)
-                    
-    #                 # Check arc length constraint (snake shouldn't stretch too much)
-    #                 if self._check_arc_length(new_data[3:6], new_data[:3]):
-    #                     continue
-                        
-    #                 # Check workspace bounds
-    #                 if not self._check_bounds(new_data):
-    #                     continue
-                        
-    #                 new_node = Node(new_data, self._get_id())
-    #                 new_node.parent = node
-    #                 neighbors.append(new_node)
-    #     return neighbors
-    
     def _generate_b_curve_points(self, node):
         """
         Maps latent Bezier parameters to joint angles via IK.
