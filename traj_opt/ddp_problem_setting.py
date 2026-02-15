@@ -63,6 +63,7 @@ class SnakeReachingDDP():
         ee_frame_name=None,
         link_frame_names=None,
         is_gravity_on=False,
+        base_placement=None,
         ):
         
         if urdf_model_path is None:
@@ -101,6 +102,31 @@ class SnakeReachingDDP():
         
         self.visual_model = self.robot.visual_model
         self.collision_model = self.robot.collision_model
+
+        if base_placement is not None:
+            # 1. Apply transform to the Kinematic Chain (starts at first moving joint)
+            first_moving_joint = "reu_joint_out2in_0"
+            if self.robot.model.existJointName(first_moving_joint):
+                joint_id = self.robot.model.getJointId(first_moving_joint)
+                
+                # Get current placement (includes any URDF offsets)
+                current_joint_placement = self.robot.model.jointPlacements[joint_id]
+                
+                # Apply the base transform
+                self.robot.model.jointPlacements[joint_id] = base_placement * current_joint_placement
+                
+                # 2. Apply transform to the Base Link Geometry (attached to Universe/Joint 0)
+                for geom_model in [self.visual_model, self.collision_model]:
+                    for geom in geom_model.geometryObjects:
+                        if geom.parentJoint == 0:  # 0 is the Universe/Root joint
+                            geom.placement = base_placement * geom.placement
+                
+                for frame in self.model.frames:
+                    # If the frame is attached to the Universe (Joint 0), it needs to move.
+                    if frame.parent == 0: 
+                        frame.placement = base_placement * frame.placement
+            else:
+                print(f"Warning: Joint {first_moving_joint} not found. Base tf assumed to be identity.")
         
         self._setCollisionPairs()
 

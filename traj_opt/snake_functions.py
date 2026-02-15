@@ -12,11 +12,12 @@ sys.path.append(current_dir)
 
 from ddp_problem_setting import SnakeReachingDDP
 
-def get_problem(dt=0.05, T=8.0):
+def get_problem(dt=0.05, T=8.0,base_placement=None):
     ddp = SnakeReachingDDP(
     urdf_model_path=current_dir+"/REU_snake_v8.urdf",
     srdf_model_path=current_dir+"/REU_snake_v8.srdf",
-    package_dirs=current_dir+"/")  
+    package_dirs=current_dir+"/",
+    base_placement=base_placement)  
     nq = ddp.nq
     nv = ddp.nv
     nu = ddp.nu
@@ -59,11 +60,12 @@ def get_ee_problem(dt=0.05, T=8.0):
     ddp_ee.CreateProblem(dt=dt, weights=weights, T=T)
     return ddp_ee
 
-def get_curve_problem(dt=0.05, T=10.0):
+def get_curve_problem(dt=0.05, T=10.0,base_placement=None,jammed_links=5):
     ddp_curve = SnakeReachingDDP(
             urdf_model_path=current_dir+"/REU_snake_v8.urdf",
             srdf_model_path=current_dir+"/REU_snake_v8.srdf",
             package_dirs=current_dir+"/",
+            base_placement=base_placement,
             link_frame_names=[
                 "reu_module_out_0",
                 "reu_module_out_1",
@@ -105,12 +107,12 @@ def get_curve_problem(dt=0.05, T=10.0):
 
     x_lb = -np.inf * np.ones(ddp_curve.state.nx)
     x_ub =  np.inf * np.ones(ddp_curve.state.nx)
-    x_lb[:5] = 0.0
-    x_ub[:5] = 0.0
+    x_lb[:jammed_links] = 0.0
+    x_ub[:jammed_links] = 0.0
     u_lb = -4 * np.ones(ddp_curve.nu)
     u_ub =  4 * np.ones(ddp_curve.nu)
-    u_lb[:5] = -400 * np.ones(5)
-    u_ub[:5] = 400 * np.ones(5)
+    u_lb[:jammed_links] = -400 * np.ones(5)
+    u_ub[:jammed_links] = 400 * np.ones(5)
     # ddp_curve.CreateProblem(dt=dt, weights=weights, T=T)
     ddp_curve.CreateProblem(
         dt=dt, 
@@ -205,6 +207,13 @@ def calculate_h(ddp_ee,q_init,goal):
     if np.linalg.norm(pin.SE3ToXYZQUAT(eef) - pin.SE3ToXYZQUAT(eef_a)) > 1e-2:
         ok = False
     return ok,qs, cost
+
+def get_link_pose(ddp,q,link_name):
+    pin.forwardKinematics(ddp.model, ddp.data, q)
+    pin.updateFramePlacements(ddp.model, ddp.data)
+    link_id = ddp.robot.model.getFrameId(link_name)
+    link_a = ddp.robot.data.oMf[link_id]
+    return link_a
 
 def get_ee_pose(ddp_ee,q):
     pin.forwardKinematics(ddp_ee.model, ddp_ee.data, q)

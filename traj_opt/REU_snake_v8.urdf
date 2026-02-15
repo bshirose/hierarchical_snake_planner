@@ -12,7 +12,8 @@
     <parent link="kdl_dummy_root"/>
     <child link="reu_module_in_0"/>
     <!-- <origin rpy="0 0 1.57079632679" xyz="0 0 0.00"/> -->
-    <origin rpy="0 0 1.57079632679" xyz="-0.253 0 0.00"/>
+    <!-- <origin rpy="0 0 1.57079632679" xyz="-0.253 0 0.00"/> -->
+    <origin rpy="0 0 0" xyz="0.0 0 0.00"/>
   </joint>
   
   <link name="reu_module_in_0">
