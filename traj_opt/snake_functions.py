@@ -12,7 +12,7 @@ sys.path.append(current_dir)
 
 from ddp_problem_setting import SnakeReachingDDP
 
-def get_problem(dt=0.05, T=8.0,base_placement=None):
+def get_problem(dt=0.05, T=10.0,base_placement=None):
     ddp = SnakeReachingDDP(
     urdf_model_path=current_dir+"/REU_snake_v8.urdf",
     srdf_model_path=current_dir+"/REU_snake_v8.srdf",
@@ -60,7 +60,7 @@ def get_ee_problem(dt=0.05, T=8.0):
     ddp_ee.CreateProblem(dt=dt, weights=weights, T=T)
     return ddp_ee
 
-def get_curve_problem(dt=0.05, T=10.0,base_placement=None,jammed_links=5):
+def get_curve_problem(dt=0.05, T=2.0,base_placement=None,jammed_links=5):
     ddp_curve = SnakeReachingDDP(
             urdf_model_path=current_dir+"/REU_snake_v8.urdf",
             srdf_model_path=current_dir+"/REU_snake_v8.srdf",
@@ -173,7 +173,11 @@ def do_traj_opt(ddp,q_init,q_f):
     xf = np.concatenate([q_f, vf])
 
     ok, xs, us, cost = ddp.Solve(x0, xf, maxiter=10000)
-    
+
+    if np.linalg.norm(xs[-1][:16]-q_f)>0.1:
+        ok = False
+    else:
+        ok = True
     return ok,xs,us,cost
 
 

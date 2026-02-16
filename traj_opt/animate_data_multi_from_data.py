@@ -13,9 +13,9 @@ parent_dir = os.path.dirname(current_dir)
 sys.path.append(parent_dir)
 
 from snake_functions import add_square_tunnel
-
+dt = 0.05
 # 1. Setup Data
-filename = 'segmented_paths.pkl'
+filename = 'segmented_paths_.pkl'
 with open(filename, 'rb') as file:
     data = pickle.load(file)
 
@@ -51,8 +51,9 @@ def setup_and_animate(segment_idx, visualizer):
     # Prepare Trajectory
     xs = seg["path"][:, :16]
     nq = ddp.nq
-    dt = 0.05 
+    # dt = 0.05 
     T = xs.shape[0] * dt
+    print(f"Segment {segment_idx} duration (s):", T)
     ts = np.linspace(0.0, T, xs.shape[0])
     qs = xs[:, :nq]
 

@@ -19,7 +19,7 @@ import time
 current_dir = os.path.dirname(os.path.abspath(__file__))
 parent_dir = os.path.dirname(current_dir)
 sys.path.append(parent_dir)
-from traj_opt.snake_functions import calculate_h, get_ee_problem, get_problem, do_traj_opt, get_ee_pose, add_square_tunnel
+from traj_opt.snake_functions import calculate_h, get_ee_problem, get_problem, do_traj_opt, get_ee_pose, add_square_tunnel, optimize_trajectory_until_collision
 from traj_opt.snake_functions import invert_snake, get_curve_problem, lift_and_do_traj_opt,get_link_pose, get_tunnel_wall_aabbs    
 
 DEBUG = True
@@ -142,8 +142,8 @@ class SnakePlanner:
 
         self.default_wall_thick = 0.04  # 2 cm thick walls
         self.default_gap_len = 0.3
-        self.default_gap_height = 0.10
-        self.default_gap_width = 0.10
+        self.default_gap_height = 0.07
+        self.default_gap_width = 0.07
         walls =[]
         if obs is not None:
             for ob in obs:
@@ -327,6 +327,12 @@ class SnakePlanner:
         link_locs = true_link_locs
         ok, traj, us, cost = lift_and_do_traj_opt(self.ddp_bb, q_init, link_locs,threshold= 0.15,goal = self.goal_pose)
         ok_c = self._check_collision(traj)
+        # if ok and ok_c:
+        #     ok_new, traj_new, us, cost = optimize_trajectory_until_collision(self.ddp, traj)
+        #     if ok_new:
+        #         traj = traj_new
+        #         ok = ok_new
+
         return ok, ok_c, traj, us, cost
     
     def _repair(self, node):
@@ -345,6 +351,7 @@ class SnakePlanner:
             if ok:
                 node.g = a.g + cost
                 node.H_traj = np.append(a.H_traj, traj, axis=0)
+                node.H = traj[-1]
                 return True, traj,us,cost
         return False, None, None, None
 
@@ -537,6 +544,7 @@ class SnakePlanner:
             dist_to_goal = self._calculate_ee_diff(current_node)
             if dist_to_goal < self.goal_proximity:
                 print("Path found!", f"Distance to goal: {dist_to_goal:.3f}")
+                print(current_node.H_traj[-1,:16])
                 pbar.close()
                 return current_node.H_traj
 
@@ -597,7 +605,7 @@ class SnakePlanner:
 
 if __name__ == "__main__":
 
-    tun1_center = np.array([0.46, -0.22, 0.19]) 
+    tun1_center = np.array([0.45, -0.22, 0.19]) 
     tun1_dir = np.array([0, 1, 0])
 
     tun2_center = np.array([0.55,0.2,0.55]) 
@@ -622,6 +630,7 @@ if __name__ == "__main__":
     base_rotation = pin.utils.rpyToMatrix(0, 0, 1.57079632679)
     base_translation = np.array([0, 0.0, 0.0])
     my_base_pose = pin.SE3(base_rotation, base_translation)
+    t = time.time()
     
     # 3. Run Planner
     planner = SnakePlanner(num_links=16, obs=obs_pin,q_init=q_init, base_tf=my_base_pose,jammed_links=4,bounds_tuple=bounds_tuple)
@@ -666,6 +675,8 @@ if __name__ == "__main__":
 
     planner2 = SnakePlanner(num_links=16, obs=obs_pin,q_init=q_init_2, base_tf=new_base_tf,jammed_links=4,bounds_tuple=bounds_tuple)
     path2 = planner2.plan(goal_pose=goal2)
+    elapsed = time.time() - t
+    print(f"Planning completed in {elapsed:.2f} seconds.")
     if path2 is not None:
         print(f"Success! Path length: {len(path2)} steps")
         scipy.io.savemat('p2.mat', {'my_matrix': path2})
@@ -682,7 +693,7 @@ if __name__ == "__main__":
     segs = [seg1, seg2]
     seg["segs"] = segs
 
-    with open('segmented_paths.pkl', 'wb') as f:
+    with open('segmented_paths_.pkl', 'wb') as f:
         pickle.dump(seg, f)
 
 
