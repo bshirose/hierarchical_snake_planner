@@ -409,3 +409,43 @@ def optimize_trajectory_until_collision(ddp_problem, xs_seed, us_seed=None, maxi
     )
     
     return ok, xs, us, cost
+
+
+
+def invert_snake(ddp,q):
+    pin.forwardKinematics(ddp.model, ddp.data, q)
+    pin.updateFramePlacements(ddp.model, ddp.data)
+    ee_pose = ddp.data.oMf[ddp.model.getFrameId("reu_module_out_16")]
+    flip_rotation = pin.utils.rpyToMatrix(0,0,-np.pi/2)
+    flip_transform = pin.SE3(flip_rotation, np.zeros(3))
+
+
+    flip_rotation2 = pin.utils.rpyToMatrix(0,0,np.pi)
+    flip_transform2 = pin.SE3(flip_rotation2, np.zeros(3))
+
+
+    rot = ee_pose.rotation
+    rot = rot @ flip_transform.rotation
+    rot = rot @ flip_transform2.rotation
+    trans = ee_pose.translation
+    new_base = pin.SE3(rot,trans)
+    qf = np.copy(q)
+    qf =np.flip(qf)
+
+    qf[2] = -qf[2]
+    qf[4] = -qf[4]
+    qf[6] = -qf[6]
+    qf[8] = -qf[8]
+    qf[10] = -qf[10]
+    qf[12] = -qf[12]
+
+
+    # qf[1] = -qf[1]
+    qf[3] = -qf[3]
+    qf[5] = -qf[5]
+    qf[7] = -qf[7]
+    qf[9] = -qf[9]
+    qf[11] = -qf[11]
+    qf[13] = -qf[13]
+
+    return new_base, qf

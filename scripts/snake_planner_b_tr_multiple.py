@@ -19,7 +19,11 @@ import time
 current_dir = os.path.dirname(os.path.abspath(__file__))
 parent_dir = os.path.dirname(current_dir)
 sys.path.append(parent_dir)
-from traj_opt.snake_functions import calculate_h, get_ee_problem, get_problem, do_traj_opt, get_ee_pose, add_square_tunnel, get_tunnel_wall_aabbs, get_curve_problem, lift_and_do_traj_opt,get_link_pose
+from traj_opt.snake_functions import calculate_h, get_ee_problem, get_problem, do_traj_opt, get_ee_pose, add_square_tunnel
+from traj_opt.snake_functions import invert_snake, get_curve_problem, lift_and_do_traj_opt,get_link_pose, get_tunnel_wall_aabbs    
+
+DEBUG = True
+MAKE_TUNNEL_0_LOOSE = True
 
 
 link_frame_names=[
@@ -95,6 +99,8 @@ class SnakePlanner:
         self.bezier_length = (num_links- self.num_jammed_links) * link_length
         self.bezier_points = num_links- self.num_jammed_links
         self.base_tf = base_tf  # Assuming base rotation is identity for now
+        self.q0 = q_init
+
 
         self.environmental_bounds = bounds_limit
 
@@ -127,7 +133,7 @@ class SnakePlanner:
         self.delta_ts = 0.01
         self.delta_tl = 0.1
         self.delta_cl = 0.15
-        self.delta_cs = 0.02
+        self.delta_cs = 0.05
         self.cost_grid_size = cost_grid_size
 
         # Internal Counter
@@ -136,36 +142,93 @@ class SnakePlanner:
 
         self.default_wall_thick = 0.04  # 2 cm thick walls
         self.default_gap_len = 0.3
-        self.default_gap_height = 0.07
-        self.default_gap_width = 0.07
+        self.default_gap_height = 0.10
+        self.default_gap_width = 0.10
         walls =[]
         if obs is not None:
             for ob in obs:
-                _, walls_sol = get_tunnel_wall_aabbs(center_pos=ob[0], 
-                                                           orientation_axis=ob[1], 
-                                                           width=self.default_gap_width, 
-                                                           height=self.default_gap_height, 
-                                                           length=self.default_gap_len, 
-                                                           wall_thick=self.default_wall_thick)
-                # walls.extend(walls_sol)
-                walls = walls+ walls_sol
-                center, direction = ob
-                add_square_tunnel(self.ddp,
-                                  center, 
-                                  direction,
-                                  width=self.default_gap_width,
-                                  height=self.default_gap_height,
-                                  length=self.default_gap_len,
-                                  wall_thick=self.default_wall_thick)
-        back = np.array([10, -45,  10, 35,  -35,  30])/100 #back wall for gap = 0.07cm and tun1_center = np.array([0.20, -0.2, 0.19]) 
-        # back = np.array([15, -45,  10, 35,  -35,  30])/100 #back wall for gap = 0.09cm and tun1_center = np.array([0.25, -0.2, 0.19]) 
-        # back = np.array([20, -45,  10, 50,  -35,  30])/100 #back wall for gap = 12cm and tun1_center = np.array([0.25, -0.2, 0.19]) 
+                if MAKE_TUNNEL_0_LOOSE and np.linalg.norm(ob[0]- np.array([-0.05,0.03,0]))<0.001:
+
+                    _, walls_sol = get_tunnel_wall_aabbs(center_pos=ob[0], 
+                                                        orientation_axis=ob[1], 
+                                                        width=0.13, 
+                                                        height=0.13, 
+                                                        length=0.2, 
+                                                        wall_thick=self.default_wall_thick)
+                    # walls_sol.pop(-2)
+                    walls = walls+ walls_sol
+                    center, direction = ob
+                    add_square_tunnel(self.ddp,
+                                    center, 
+                                    direction,
+                                    width=0.12,
+                                    height=0.12,
+                                    length=0.2,
+                                    wall_thick=self.default_wall_thick)
+                else:
+                    _, walls_sol = get_tunnel_wall_aabbs(center_pos=ob[0], 
+                                            orientation_axis=ob[1], 
+                                            width=self.default_gap_width, 
+                                            height=self.default_gap_height, 
+                                            length=self.default_gap_len, 
+                                            wall_thick=self.default_wall_thick)
+                    walls = walls+ walls_sol
+                    center, direction = ob
+                    add_square_tunnel(self.ddp,
+                                    center, 
+                                    direction,
+                                    width=self.default_gap_width,
+                                    height=self.default_gap_height,
+                                    length=self.default_gap_len,
+                                    wall_thick=self.default_wall_thick)
+        back = np.array([36, -45,  10, 55,  -35,  30])/100 
+        back2 = np.array([46.,  11.,  70,  64.,  29.,75])/100
 
         self.obstacles = walls
         self.obstacles.append(back)
+        self.obstacles.append(back2)
     # =========================================================================
     #    Helper Methods (Dynamics, Kinematics, Collision, Heuristics)
     # =========================================================================
+    def _fit_cp_to_state(self, q_full):
+        """
+        Calculates the Control Point that best fits the actual robot shape
+        using Linear Least Squares.
+        """
+        # P_world is shape (3, N+1)
+        P_world = []
+        for i in range(self.num_jammed_links, self.num_links+1):
+            link_name = link_frame_names[i]
+            link_pos = get_link_pose(self.ddp,q_full,link_name)
+            P_world.append(link_pos.translation)
+        P_world = np.array(P_world).T
+        
+        base = P_world[:, 0]
+        ee = P_world[:, -1]
+        numerator = np.zeros(3)
+        denominator = 0.0
+        
+        # We skip 0 and N because Bezier curves match endpoints exactly by definition
+        for i in range(1, self.bezier_points): 
+            s = i / self.bezier_points
+            L_i = P_world[:, i]
+            
+            # Bezier terms
+            # P(s) = A_i + w_i * P1
+            # where A_i is the fixed part contributed by Base and EE
+            w_i = 2 * s * (1 - s)
+            A_i = ((1 - s)**2 * base) + (s**2 * ee)
+            
+            # Accumulate terms
+            numerator += w_i * (L_i - A_i)
+            denominator += w_i**2
+            
+        if denominator < 1e-6:
+            return (base + ee) / 2.0 # Fallback (shouldn't happen for N > 2)
+            
+        best_cp = numerator / denominator
+        return best_cp
+    
 
     def _get_id(self):
         self._node_counter += 1
@@ -254,45 +317,18 @@ class SnakePlanner:
         return link_locs
 
 
-    def _lift_and_do_traj_opt(self,parent, node):
+    def _lift_and_do_traj_opt(self,q_init, node):
 
-        q_init = parent.H[:self.ddp.nq] if parent is not None else np.zeros(self.ddp.nq)
+        # q_init = parent.H[:self.ddp.nq] if parent is not None else np.zeros(self.ddp.nq)
         link_locs = self._generate_b_curve_points(node)
         true_link_locs = [self.first_locs[i] for i in range(len(self.first_locs))]
         for i in range(len(link_locs)):
             true_link_locs.append(link_locs[i])
         link_locs = true_link_locs
         ok, traj, us, cost = lift_and_do_traj_opt(self.ddp_bb, q_init, link_locs,threshold= 0.15,goal = self.goal_pose)
-        # ok, traj, us, cost = lift_and_do_traj_opt(self.ddp_bb, q_init, link_locs)
         ok_c = self._check_collision(traj)
         return ok, ok_c, traj, us, cost
     
-    def r_forward_kinematics(self, q):
-        """Computes positions of all joints and EE transform."""
-        q = np.atleast_1d(q)
-        
-        T_current = np.eye(4)
-        T_links = [np.eye(4)] # Include base
-
-        for i in range(self.num_links):
-            # Alternating joints: Even=Z (Yaw), Odd=Y (Pitch) - based on original code
-            if i % 2 == 0:
-                T_joint = self._Rz(q[i])
-            else:
-                T_joint = self._Ry(q[i])
-                
-            T_current = T_current @ T_joint @ self._Tx(self.link_length)
-            T_links.append(T_current)
-
-        # Apply Base Transform
-        P_world = np.zeros((3, self.num_links + 1))
-        T_ee_world = self.base_tf @ T_links[-1]
-        
-        for i in range(self.num_links + 1):
-            T_world = self.base_tf @ T_links[i]
-            P_world[:, i] = T_world[0:3, 3]
-
-        return P_world, T_ee_world
     def _repair(self, node):
         """Recursively tries to connect to ancestors if immediate parent fails."""
         ancestor = node.parent
@@ -340,7 +376,7 @@ class SnakePlanner:
         neighbors = [(1,0,0), (-1,0,0), (0,1,0), (0,-1,0), (0,0,1), (0,0,-1)]
         
         # Limit iterations for safety/speed
-        max_voxels = 500000 
+        max_voxels = 1000000 
         count = 0
         
         while pq and count < max_voxels:
@@ -380,22 +416,15 @@ class SnakePlanner:
         return steps * self.cost_grid_size
 
     def _do_traj_opt(self, q_init, q_f):
-        # start_time = time.perf_counter()
         ok, xs, us, cost = do_traj_opt(self.ddp, q_init, q_f)
         if not ok:
             return False, None, None, None
-        # end_time = time.perf_counter()
-        # print(f"Trajectory optimization time: {end_time - start_time:.4f} seconds")
-        # start_time = time.perf_counter()
         ok_c = self._check_collision(xs)
-        # end_time = time.perf_counter()
-        # print(f"Collision checking time: {end_time - start_time:.4f} seconds")
         return ok and ok_c, xs, us, cost
     
 
     def _calculate_ee_diff(self, node):
         ee_pose = self._get_ee_pose(node.H[:self.ddp.nq])
-        # ee_pose = get_ee_pose(self.ddp, node.H[:self.ddp.nq])
         return np.linalg.norm(ee_pose.translation - self.goal_pose.translation)
     
     def _check_collision(self, traj, stride=5):
@@ -450,27 +479,20 @@ class SnakePlanner:
     
 
 
-    def plan(self, x_init, goal_pose, max_iter=15000):
+    def plan(self, goal_pose, max_iter=15000):
 
         self._node_counter = 0
         self.goal_pose = goal_pose
         print("Generating cost field...")
-        # bounds_tuple = ((-0.1, self.bounds_limit), 
-        #                 (-self.bounds_limit, self.bounds_limit), 
-        #                 (-0.1, self.bounds_limit))
         self.cost_map = self._generate_cost_field(self.goal_pose.translation, self.bounds_tuple)
         print("Cost field generated.")
 
-        # 2. Initialize Root Node
-        # initial_latent = np.array([
-        #     self.link_length * self.num_links / 2, 0, 0, 
-        #     self.link_length * self.num_links, 0, 0
-        # ])
-
-        initial_latent = np.array([self.bezier_base[0] + 0.6072/2, 0, 0,self.bezier_base[0] + 0.6072, 0, 0])
+        cp = self._fit_cp_to_state(self.q0)
+        ee_tm = self._get_ee_pose(self.q0)
+        initial_latent = np.array([cp[0], cp[1], cp[2], ee_tm.translation[0], ee_tm.translation[1], ee_tm.translation[2]])
         
         root = Node(initial_latent, self._get_id())
-        ok,ok_c,traj,us,cost = self._lift_and_do_traj_opt(root.parent,root)
+        ok,ok_c,traj,us,cost = self._lift_and_do_traj_opt(self.q0,root)
         if not ok or not ok_c:
             print("Initial trajectory optimization failed. Check if the goal is reachable or if the initial guess is valid.")
             return None
@@ -478,7 +500,8 @@ class SnakePlanner:
         ee_tm = self._get_ee_pose(root.H[:self.ddp.nq])
         root.data[3:6] = ee_tm.translation
         
-        root.H_traj = np.array([root.H])
+        root.H_traj = np.array(traj[0])
+        root.H_traj = np.vstack((root.H_traj,traj))
         root.h = self._calculate_h(root)
         
         open_list = [root]
@@ -489,6 +512,9 @@ class SnakePlanner:
 
         # 3. Search Loop
         pbar = tqdm.tqdm(total=max_iter, desc="Planning")
+
+        if DEBUG:
+            self.ddp.InitDisplay()
         
         for _ in range(max_iter):
             if not open_list:
@@ -499,6 +525,8 @@ class SnakePlanner:
             open_list.sort(key=lambda x: x.h)
             current_node = open_list.pop(0)
             
+            if DEBUG:
+                self.ddp.ShowSnakeConfiguration(current_node.H[:self.ddp.nq])
             # State signature for visited set (tuple of latent variables)
             state_signature = tuple(np.round(current_node.data, 2))
             if state_signature in closed_set:
@@ -530,7 +558,7 @@ class SnakePlanner:
                     continue
 
                 # h= self.r_lift_to_high(neighbor)
-                ok, ok_c, traj, us, cost = self._lift_and_do_traj_opt(current_node,neighbor)
+                ok, ok_c, traj, us, cost = self._lift_and_do_traj_opt(current_node.H[:self.ddp.nq],neighbor)
                 if not ok:
                     continue
                 neighbor.H = traj[-1]
@@ -552,7 +580,6 @@ class SnakePlanner:
                         continue
 
                 ee_tm = self._get_ee_pose(neighbor.H[:self.ddp.nq])
-                # ee_tm = get_ee_pose(self.ddp, neighbor.H[:self.ddp.nq])
                 neighbor.data[3:6] = np.round(ee_tm.translation, 2)
                 neighbor.h = self._calculate_h(neighbor)
                 dist_to_goal = self._calculate_ee_diff(neighbor)
@@ -570,18 +597,25 @@ class SnakePlanner:
 
 if __name__ == "__main__":
 
-    tun1_center = np.array([0.20+0.253, -0.2, 0.19]) 
+    tun1_center = np.array([0.46, -0.22, 0.19]) 
     tun1_dir = np.array([0, 1, 0])
+
+    tun2_center = np.array([0.55,0.2,0.55]) 
+    tun2_dir = np.array([0, 0, 1])
+
+    tun3_center = np.array([-0.05,0.03,0.0]) 
+    tun3_dir = np.array([1, 0, 0])
     obs_pin = None
-    obs_pin = [[tun1_center,tun1_dir]]
-    obs_pin = None
+    obs_pin = [[tun1_center,tun1_dir],[tun2_center,tun2_dir]]
+    # obs_pin = [[tun1_center,tun1_dir],[tun2_center,tun2_dir],[tun3_center,tun3_dir]]
+    # obs_pin = None
     bounds_limit = 0.65
     bounds_tuple = ((-0.1+0.253, bounds_limit+0.253), 
                 (-bounds_limit, bounds_limit), 
                 (-0.1, bounds_limit))
 
     # 2. Define Goal and Init
-    pos = np.array([0.20+0.253, -0.32, 0.19]) 
+    pos = np.array([0.20+0.26, -0.34, 0.19]) 
     rot = np.array(([0,-1,0],[1,0,0],[0,0,1]))
     goal = pin.SE3(rot,pos)
     q_init = np.zeros(16)
@@ -591,11 +625,66 @@ if __name__ == "__main__":
     
     # 3. Run Planner
     planner = SnakePlanner(num_links=16, obs=obs_pin,q_init=q_init, base_tf=my_base_pose,jammed_links=4,bounds_tuple=bounds_tuple)
-    path = planner.plan(x_init=None, goal_pose=goal)
+    path = planner.plan(goal_pose=goal)
+    seg = {}
+    seg["obs"] = obs_pin
+    seg["obs_width"] = planner.default_gap_width    
+    seg["obs_height"] = planner.default_gap_height
+    seg["obs_length"] = planner.default_gap_len
+    seg["wall_thick"] = planner.default_wall_thick
+    seg["total_segments"] = 2
+
+    seg1 = {}
+    seg1["goal"] = goal  
+    seg1["base"] = my_base_pose
+    seg1["q_init"] = q_init
+    seg1["path"] = path
     
     if path is not None:
         print(f"Success! Path length: {len(path)} steps")
-        scipy.io.savemat('data_torq_limts.mat', {'my_matrix': path})
-        np.save('data_torq_limts.npy', path)
+        scipy.io.savemat('p1.mat', {'my_matrix': path})
+        np.save('p1.npy', path)
     else:
         print("Failed to find path.")
+        exit()
+    # path = np.load("p1.npy")
+    new_base_tf, q_init_2 = invert_snake(planner.ddp, path[-1][:16])
+
+    bounds_tuple = ((-0.1, 0.6), 
+                    (-0.1, 0.65), 
+                    (-0.1, 0.7))
+    
+    rot = np.array(([ 0, 0, 1],
+                    [ 0, 1, 0],
+                    [-1, 0, 0]))
+    rot_x_180 = pin.utils.rpyToMatrix(np.pi,0,0)
+    rot = rot @ rot_x_180
+    pos =np.array([0.55,0.2,0.6])
+    goal2 = pin.SE3(rot,pos)
+
+
+
+    planner2 = SnakePlanner(num_links=16, obs=obs_pin,q_init=q_init_2, base_tf=new_base_tf,jammed_links=4,bounds_tuple=bounds_tuple)
+    path2 = planner2.plan(goal_pose=goal2)
+    if path2 is not None:
+        print(f"Success! Path length: {len(path2)} steps")
+        scipy.io.savemat('p2.mat', {'my_matrix': path2})
+        np.save('p2.npy', path2)
+    else:
+        print("Failed to find path.")
+    
+    seg2 = {}
+    seg2["goal"] = goal2
+    seg2["base"] = new_base_tf
+    seg2["q_init"] = q_init_2
+    seg2["path"] = path2
+
+    segs = [seg1, seg2]
+    seg["segs"] = segs
+
+    with open('segmented_paths.pkl', 'wb') as f:
+        pickle.dump(seg, f)
+
+
+
+    
